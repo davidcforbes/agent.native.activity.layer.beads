@@ -1,0 +1,308 @@
+:root {
+    --pad: 12px;
+    --radius: 10px;
+    --border: rgba(255, 255, 255, 0.12);
+    --muted: rgba(255, 255, 255, 0.7);
+    --bg2: rgba(255, 255, 255, 0.06);
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+    color: var(--vscode-editor-foreground);
+    background: var(--vscode-editor-background);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--pad);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    /* Ensure header doesn't shrink */
+}
+
+/* ... title, actions, buttons ... */
+.title {
+    font-weight: 600;
+}
+
+.actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: inherit;
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.select {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: inherit;
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.search-input {
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    color: inherit;
+    padding: 6px 10px;
+    border-radius: 8px;
+    width: 150px;
+}
+
+.btn.primary {
+    background: var(--bg2);
+}
+
+.board {
+    display: flex;
+    gap: 12px;
+    padding: var(--pad);
+    flex: 1;
+    overflow-y: hidden;
+    overflow-x: auto;
+    height: 100%;
+}
+
+.column {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 100%;
+    flex: 1;
+    min-width: 220px;
+    transition: all 0.2s ease;
+}
+
+.columnHeader {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.columnTitle {
+    font-weight: 600;
+}
+
+.columnCount {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.dropZone {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    cursor: grab;
+}
+
+.cardTitle {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.badge {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.dialog {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0;
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+}
+
+.dialogForm {
+    padding: 14px;
+    min-width: 480px;
+}
+
+.dialogForm input,
+.dialogForm textarea {
+    width: 100%;
+    margin: 6px 0 12px 0;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    color: inherit;
+    border-radius: 10px;
+    padding: 8px;
+}
+
+.dialogActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.toast {
+    position: fixed;
+    bottom: 14px;
+    left: 14px;
+    right: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    z-index: 999;
+}
+
+.toast-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: #4daafc;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.toast-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.toast.hidden {
+    display: none;
+}
+
+/* SortableJS styles */
+.sortable-ghost {
+    opacity: 0.4;
+    background: var(--bg2);
+    border: 1px dashed var(--muted);
+}
+
+.sortable-chosen {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.sortable-drag {
+    cursor: grabbing;
+}
+
+/* Type Badges */
+.badge-type-bug {
+    background: rgba(234, 84, 85, 0.15);
+    color: #ea5455;
+    border-color: rgba(234, 84, 85, 0.3);
+}
+
+.badge-type-feature {
+    background: rgba(40, 199, 111, 0.15);
+    color: #28c76f;
+    border-color: rgba(40, 199, 111, 0.3);
+}
+
+.badge-type-task {
+    background: rgba(115, 103, 240, 0.15);
+    color: #7367f0;
+    border-color: rgba(115, 103, 240, 0.3);
+}
+
+main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* Collapsed Columns */
+.column.collapsed {
+    flex: 0 0 40px;
+    min-width: 40px;
+    /* Override grid/flex min defaults if any */
+    width: 40px;
+    transition: all 0.2s ease;
+}
+
+.column.collapsed .dropZone,
+.column.collapsed .columnCount {
+    display: none;
+}
+
+.column.collapsed .columnHeader {
+    flex-direction: column-reverse;
+    justify-content: flex-start;
+    gap: 12px;
+    height: 100%;
+    align-items: center;
+    padding-top: 12px;
+}
+
+.column.collapsed .columnTitle {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    margin-bottom: auto;
+    /* Push to top (visually bottom due to rotate) */
+}
+
+/* Icon button for collapse/expand */
+.icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+}
+
+.icon-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--vscode-editor-foreground);
+}

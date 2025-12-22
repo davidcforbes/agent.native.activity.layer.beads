@@ -1,0 +1,57 @@
+{
+  "name": "beads-kanban",
+  "displayName": "Beads Kanban",
+  "description": "Kanban board for Beads issues stored in .beads SQLite",
+  "version": "0.0.1",
+  "publisher": "your-org",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:beadsKanban.openBoard"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "beadsKanban.openBoard",
+        "title": "Beads: Open Kanban Board"
+      }
+    ],
+    "configuration": {
+      "title": "Beads Kanban",
+      "properties": {
+        "beadsKanban.readOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, disables write operations (create/move/update)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "lint": "eslint src --ext ts",
+    "test": "echo \"No tests\"",
+    "rebuild": "cd node_modules/better-sqlite3 && ../../node_modules/.bin/node-gyp rebuild --target=22.18.0 --arch=arm64 --dist-url=https://nodejs.org/dist"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.11.30",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.90.0",
+    "node-gyp": "^12.1.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.5.0",
+    "uuid": "^10.0.0"
+  }
+}
