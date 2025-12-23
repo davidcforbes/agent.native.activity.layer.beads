@@ -15,6 +15,8 @@ export interface IssueRow {
   updated_at: string;
   closed_at: string | null;
   external_ref: string | null;
+  acceptance_criteria: string;
+  design: string;
 
   is_ready: number; // 0/1
   blocked_by_count: number; // integer
@@ -33,6 +35,8 @@ export interface BoardCard {
   updated_at: string;
   closed_at?: string | null;
   external_ref?: string | null;
+  acceptance_criteria: string;
+  design: string;
 
   is_ready: boolean;
   blocked_by_count: number;
@@ -43,6 +47,15 @@ export interface BoardCard {
   children?: { id: string; title: string }[];
   blocks?: { id: string; title: string }[];
   blocked_by?: { id: string; title: string }[];
+  comments?: Comment[];
+}
+
+export interface Comment {
+  id: number;
+  issue_id: string;
+  author: string;
+  text: string;
+  created_at: string;
 }
 
 export interface BoardColumn {

@@ -54,9 +54,9 @@ function activate(context) {
         panel.webview.html = (0, webview_1.getWebviewHtml)(panel.webview, context.extensionUri);
         const readOnly = vscode.workspace.getConfiguration().get("beadsKanban.readOnly", false);
         const post = (msg) => panel.webview.postMessage(msg);
-        const sendBoard = (requestId) => {
+        const sendBoard = async (requestId) => {
             try {
-                const data = adapter.getBoard();
+                const data = await adapter.getBoard();
                 post({ type: "board.data", requestId, payload: data });
             }
             catch (e) {
@@ -76,20 +76,71 @@ function activate(context) {
             }
             try {
                 if (msg.type === "issue.create") {
-                    adapter.createIssue({
+                    await adapter.createIssue({
                         title: msg.payload.title,
                         description: msg.payload.description ?? ""
                     });
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     // push refreshed board
-                    sendBoard(msg.requestId);
+                    await sendBoard(msg.requestId);
                     return;
                 }
                 if (msg.type === "issue.move") {
                     const toStatus = mapColumnToStatus(msg.payload.toColumn);
-                    adapter.setIssueStatus(msg.payload.id, toStatus);
+                    await adapter.setIssueStatus(msg.payload.id, toStatus);
                     post({ type: "mutation.ok", requestId: msg.requestId });
-                    sendBoard(msg.requestId);
+                    await sendBoard(msg.requestId);
+                    return;
+                }
+                if (msg.type === "issue.addToChat") {
+                    vscode.commands.executeCommand("workbench.action.chat.open", { query: msg.payload.text });
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    return;
+                }
+                if (msg.type === "issue.copyToClipboard") {
+                    vscode.env.clipboard.writeText(msg.payload.text);
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    vscode.window.showInformationMessage("Issue context copied to clipboard.");
+                    return;
+                }
+                if (msg.type === "issue.update") {
+                    await adapter.updateIssue(msg.payload.id, msg.payload.updates);
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    await sendBoard(msg.requestId);
+                    return;
+                }
+                if (msg.type === "issue.addComment") {
+                    // TODO: Attempt to get git user name or vs code user name? 
+                    // For now, default to "Me" or let UI send it?
+                    // Let's use a simple default here if not provided.
+                    const author = msg.payload.author || "User";
+                    await adapter.addComment(msg.payload.id, msg.payload.text, author);
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    await sendBoard(msg.requestId);
+                    return;
+                }
+                if (msg.type === "issue.addLabel") {
+                    await adapter.addLabel(msg.payload.id, msg.payload.label);
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    await sendBoard(msg.requestId);
+                    return;
+                }
+                if (msg.type === "issue.removeLabel") {
+                    await adapter.removeLabel(msg.payload.id, msg.payload.label);
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    await sendBoard(msg.requestId);
+                    return;
+                }
+                if (msg.type === "issue.addDependency") {
+                    await adapter.addDependency(msg.payload.id, msg.payload.otherId, msg.payload.type);
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    await sendBoard(msg.requestId);
+                    return;
+                }
+                if (msg.type === "issue.removeDependency") {
+                    await adapter.removeDependency(msg.payload.id, msg.payload.otherId);
+                    post({ type: "mutation.ok", requestId: msg.requestId });
+                    await sendBoard(msg.requestId);
                     return;
                 }
                 post({ type: "mutation.error", requestId: msg.requestId, error: `Unknown message type: ${msg.type}` });

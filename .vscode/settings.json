@@ -1,0 +1,10 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "name": "beads",
+            "database": "${workspaceFolder:beads-kanban}/.beads/beads.db"
+        }
+    ]
+}

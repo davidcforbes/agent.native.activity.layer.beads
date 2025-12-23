@@ -105,6 +105,10 @@ function getWebviewHtml(webview, extensionUri) {
       <hr style="border: 0; border-top: 1px solid var(--border); margin: 12px 0;">
       <div id="detDesc" style="white-space: pre-wrap; font-family: inherit; opacity: 0.9;"></div>
       <div class="dialogActions" style="margin-top: 16px;">
+        <div style="margin-right: auto; display: flex; gap: 8px;">
+            <button id="addToChatBtn" class="btn">Add to Chat</button>
+            <button id="copyContextBtn" class="btn">Copy Context</button>
+        </div>
         <button value="close" class="btn">Close</button>
       </div>
     </form>
@@ -113,6 +117,7 @@ function getWebviewHtml(webview, extensionUri) {
   <div id="toast" class="toast hidden"></div>
 
   <script nonce="${nonce}" src="${sortableUri}"></script>
+  <script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "marked.min.js"))}"></script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

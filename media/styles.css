@@ -53,9 +53,9 @@ body {
 }
 
 .select {
-    border: 1px solid var(--border);
-    background: transparent;
-    color: inherit;
+    border: 1px solid var(--vscode-dropdown-border);
+    background: var(--vscode-dropdown-background);
+    color: var(--vscode-dropdown-foreground);
     padding: 6px 10px;
     border-radius: 8px;
     cursor: pointer;
@@ -329,4 +329,50 @@ main {
     background: rgba(234, 84, 85, 0.1);
     color: #ea5455;
     border-color: rgba(234, 84, 85, 0.3);
+}
+
+/* Markdown Styles */
+.markdown-body {
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.markdown-body p {
+    margin: 6px 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+    margin: 6px 0;
+    padding-left: 20px;
+}
+
+.markdown-body code {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-family: monospace;
+}
+
+.markdown-body pre {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 10px;
+    border-radius: 6px;
+    overflow-x: auto;
+}
+
+.markdown-body a {
+    color: #4daafc;
+    text-decoration: none;
+}
+
+.markdown-body a:hover {
+    text-decoration: underline;
+}
+
+.markdown-body blockquote {
+    border-left: 3px solid var(--border);
+    margin: 6px 0;
+    padding-left: 10px;
+    color: var(--muted);
 }

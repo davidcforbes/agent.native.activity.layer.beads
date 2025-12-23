@@ -1,12 +1,12 @@
 import * as fs from "fs";
 import * as path from "path";
-import Database from "better-sqlite3";
+import initSqlJs, { Database, QueryExecResult } from "sql.js";
 import * as vscode from "vscode";
 import { v4 as uuidv4 } from "uuid";
-import { BoardCard, BoardData, BoardColumn, IssueRow, IssueStatus } from "./types";
+import { BoardCard, BoardData, BoardColumn, IssueRow, IssueStatus, Comment } from "./types";
 
 export class BeadsAdapter {
-  private db: Database.Database | null = null;
+  private db: Database | null = null;
   private dbPath: string | null = null;
 
   constructor(private readonly output: vscode.OutputChannel) {}
@@ -21,7 +21,7 @@ export class BeadsAdapter {
     this.dbPath = null;
   }
 
-  public ensureConnected(): void {
+  public async ensureConnected(): Promise<void> {
     const ws = vscode.workspace.workspaceFolders?.[0];
     if (!ws) {
       throw new Error("Open a folder workspace to use Beads Kanban.");
@@ -42,18 +42,22 @@ export class BeadsAdapter {
     }
 
     const failureReasons: string[] = [];
+    
+    // Initialize SQL.js
+    const SQL = await initSqlJs({
+       locateFile: (file) => path.join(__dirname, file)
+    });
 
     // Find the DB that contains the `issues` table.
     for (const p of candidatePaths) {
       try {
-        const db = new Database(p, { readonly: false, fileMustExist: true });
+        const filebuffer = fs.readFileSync(p);
+        const db = new SQL.Database(filebuffer);
         
         // Check for issues table
-        const row = db
-          .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='issues' LIMIT 1;")
-          .get() as { ok?: number } | undefined;
-
-        if (row?.ok === 1) {
+        const res = db.exec("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='issues' LIMIT 1;");
+        
+        if (res.length > 0 && res[0].values.length > 0 && res[0].values[0][0] === 1) {
           const msg = `[BeadsAdapter] Connected to DB: ${p}`;
           this.output.appendLine(msg);
           console.log(msg);
@@ -62,15 +66,14 @@ export class BeadsAdapter {
           return;
         }
 
-        // If 'issues' table logic failed, list actual tables to help debug
-        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table';").all() as { name: string }[];
-        const tableNames = tables.map(t => t.name).join(', ');
+        const tablesRes = db.exec("SELECT name FROM sqlite_master WHERE type='table';");
+        const tableNames = tablesRes.length > 0 ? tablesRes[0].values.map(v => v[0]).join(', ') : '';
         const reason = `File opened but 'issues' table missing. Tables found: [${tableNames}]`;
         
         this.output.appendLine(`[BeadsAdapter] ${p}: ${reason}`);
         console.warn(`[BeadsAdapter] ${p}: ${reason}`);
         failureReasons.push(`${path.basename(p)}: ${reason}`);
-
+        
         db.close();
       } catch (e) {
         const msg = String(e instanceof Error ? e.message : e);
@@ -89,13 +92,12 @@ export class BeadsAdapter {
     return this.dbPath;
   }
 
-  public getBoard(): BoardData {
-    if (!this.db) this.ensureConnected();
+  public async getBoard(): Promise<BoardData> {
+    if (!this.db) await this.ensureConnected();
     const db = this.db!;
 
     // 1) Load issues + derived readiness and blockedness via views
-    const issues = db
-      .prepare(`
+    const issues = this.queryAll(`
         SELECT
           i.id,
           i.title,
@@ -109,6 +111,8 @@ export class BeadsAdapter {
           i.updated_at,
           i.closed_at,
           i.external_ref,
+          i.acceptance_criteria,
+          i.design,
           CASE WHEN ri.id IS NOT NULL THEN 1 ELSE 0 END AS is_ready,
           COALESCE(bi.blocked_by_count, 0) AS blocked_by_count
         FROM issues i
@@ -116,8 +120,7 @@ export class BeadsAdapter {
         LEFT JOIN blocked_issues bi ON bi.id = i.id
         WHERE i.deleted_at IS NULL
         ORDER BY i.priority ASC, i.updated_at DESC, i.created_at DESC;
-      `)
-      .all() as IssueRow[];
+      `) as IssueRow[];
 
     const ids = issues.map((i) => i.id);
 
@@ -141,14 +144,13 @@ export class BeadsAdapter {
     const childrenMap = new Map<string, { id: string; title: string }[]>();
     const blockedByMap = new Map<string, { id: string; title: string }[]>();
     const blocksMap = new Map<string, { id: string; title: string }[]>();
+    const commentsByIssue = new Map<string, Comment[]>();
 
     if (ids.length > 0) {
       const placeholders = ids.map(() => "?").join(",");
 
       // Fetch labels
-      const labelRows = db
-        .prepare(`SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders}) ORDER BY label;`)
-        .all(...ids) as Array<{ issue_id: string; label: string }>;
+      const labelRows = this.queryAll(`SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders}) ORDER BY label;`, ids) as Array<{ issue_id: string; label: string }>;
 
       for (const r of labelRows) {
         const arr = labelsByIssue.get(r.issue_id) ?? [];
@@ -161,13 +163,13 @@ export class BeadsAdapter {
       // Actually, 'issues' query above fetches ALL issues (no WHERE clause except deleted_at IS NULL).
       // So 'ids' should check all.
       
-      const allDeps = db.prepare(`
+      const allDeps = this.queryAll(`
         SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title
         FROM dependencies d
         JOIN issues i1 ON i1.id = d.issue_id
         JOIN issues i2 ON i2.id = d.depends_on_id
         WHERE d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders});
-      `).all(...ids, ...ids) as { issue_id: string; depends_on_id: string; type: string; issue_title: string; depends_title: string }[];
+      `, [...ids, ...ids]) as { issue_id: string; depends_on_id: string; type: string; issue_title: string; depends_title: string }[];
 
       for (const d of allDeps) {
         const child = { id: d.issue_id, title: d.issue_title };
@@ -191,6 +193,20 @@ export class BeadsAdapter {
           blocksMap.set(d.depends_on_id, blocksList);
         }
       }
+      
+      // Fetch comments for these issues
+      const allComments = this.queryAll(`
+        SELECT id, issue_id, author, text, created_at
+        FROM comments
+        WHERE issue_id IN (${placeholders})
+        ORDER BY created_at ASC;
+      `, ids) as Comment[];
+
+      for (const c of allComments) {
+        const list = commentsByIssue.get(c.issue_id) ?? [];
+        list.push(c);
+        commentsByIssue.set(c.issue_id, list);
+      }
     }
 
     const cards: BoardCard[] = issues.map((r) => ({
@@ -208,11 +224,14 @@ export class BeadsAdapter {
       external_ref: r.external_ref,
       is_ready: r.is_ready === 1,
       blocked_by_count: r.blocked_by_count,
+      acceptance_criteria: r.acceptance_criteria,
+      design: r.design,
       labels: labelsByIssue.get(r.id) ?? [],
       parent: parentMap.get(r.id),
       children: childrenMap.get(r.id),
       blocked_by: blockedByMap.get(r.id),
-      blocks: blocksMap.get(r.id)
+      blocks: blocksMap.get(r.id),
+      comments: commentsByIssue.get(r.id) ?? []
     }));
 
     const columns: BoardColumn[] = [
@@ -225,7 +244,7 @@ export class BeadsAdapter {
     return { columns, cards };
   }
 
-  public createIssue(input: {
+  public async createIssue(input: {
     title: string;
     description?: string;
     status?: IssueStatus;
@@ -233,8 +252,8 @@ export class BeadsAdapter {
     issue_type?: string;
     assignee?: string | null;
     estimated_minutes?: number | null;
-  }): { id: string } {
-    if (!this.db) this.ensureConnected();
+  }): Promise<{ id: string }> {
+    if (!this.db) await this.ensureConnected();
     const db = this.db!;
 
     const id = uuidv4();
@@ -248,38 +267,136 @@ export class BeadsAdapter {
     const assignee = input.assignee ?? null;
     const estimated = input.estimated_minutes ?? null;
 
-    db.prepare(`
+    this.runQuery(`
       INSERT INTO issues (id, title, description, status, priority, issue_type, assignee, estimated_minutes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-    `).run(id, title, description, status, priority, issueType, assignee, estimated);
+    `, [id, title, description, status, priority, issueType, assignee, estimated]);
 
     return { id };
   }
 
-  public setIssueStatus(id: string, toStatus: IssueStatus): void {
-    if (!this.db) this.ensureConnected();
+  public async setIssueStatus(id: string, toStatus: IssueStatus): Promise<void> {
+    if (!this.db) await this.ensureConnected();
     const db = this.db!;
 
     // Enforce closed_at CHECK constraint properly
     if (toStatus === "closed") {
-      db.prepare(`
+      this.runQuery(`
         UPDATE issues
         SET status='closed',
             closed_at=CURRENT_TIMESTAMP,
             updated_at=CURRENT_TIMESTAMP
         WHERE id = ?
           AND deleted_at IS NULL;
-      `).run(id);
+      `, [id]);
       return;
     }
 
-    db.prepare(`
+    this.runQuery(`
       UPDATE issues
       SET status = ?,
-          closed_at = NULL,
-          updated_at = CURRENT_TIMESTAMP
+      closed_at = NULL,
+      updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-        AND deleted_at IS NULL;
-    `).run(toStatus, id);
+      AND deleted_at IS NULL;
+      `, [toStatus, id]);
+  }
+
+  public async updateIssue(id: string, updates: {
+    title?: string;
+    description?: string;
+    priority?: number;
+    issue_type?: string;
+    assignee?: string | null;
+    estimated_minutes?: number | null;
+    acceptance_criteria?: string;
+    design?: string;
+    external_ref?: string | null;
+  }): Promise<void> {
+    if (!this.db) await this.ensureConnected();
+
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (updates.title !== undefined) { fields.push("title = ?"); values.push(updates.title); }
+    if (updates.description !== undefined) { fields.push("description = ?"); values.push(updates.description); }
+    if (updates.priority !== undefined) { fields.push("priority = ?"); values.push(updates.priority); }
+    if (updates.issue_type !== undefined) { fields.push("issue_type = ?"); values.push(updates.issue_type); }
+    if (updates.assignee !== undefined) { fields.push("assignee = ?"); values.push(updates.assignee); }
+    if (updates.estimated_minutes !== undefined) { fields.push("estimated_minutes = ?"); values.push(updates.estimated_minutes); }
+    if (updates.acceptance_criteria !== undefined) { fields.push("acceptance_criteria = ?"); values.push(updates.acceptance_criteria); }
+    if (updates.design !== undefined) { fields.push("design = ?"); values.push(updates.design); }
+    if (updates.external_ref !== undefined) { fields.push("external_ref = ?"); values.push(updates.external_ref); }
+
+    if (fields.length === 0) return;
+
+    fields.push("updated_at = CURRENT_TIMESTAMP");
+
+    values.push(id);
+
+    this.runQuery(`
+      UPDATE issues
+      SET ${fields.join(", ")}
+      WHERE id = ? AND deleted_at IS NULL;
+    `, values);
+  }
+
+  public async addComment(issueId: string, text: string, author: string): Promise<void> {
+    if (!this.db) await this.ensureConnected();
+    
+    this.runQuery(`
+      INSERT INTO comments (issue_id, author, text)
+      VALUES (?, ?, ?);
+    `, [issueId, author, text]);
+  }
+
+  public async addLabel(issueId: string, label: string): Promise<void> {
+    if (!this.db) await this.ensureConnected();
+    this.runQuery("INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?, ?)", [issueId, label]);
+  }
+
+  public async removeLabel(issueId: string, label: string): Promise<void> {
+    if (!this.db) await this.ensureConnected();
+    this.runQuery("DELETE FROM labels WHERE issue_id = ? AND label = ?", [issueId, label]);
+  }
+
+  public async addDependency(issueId: string, dependsOnId: string, type: 'parent-child' | 'blocks' = 'blocks'): Promise<void> {
+    if (!this.db) await this.ensureConnected();
+    this.runQuery(`
+      INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_by)
+      VALUES (?, ?, ?, 'extension');
+    `, [issueId, dependsOnId, type]);
+  }
+
+  public async removeDependency(issueId: string, dependsOnId: string): Promise<void> {
+    if (!this.db) await this.ensureConnected();
+    this.runQuery("DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?", [issueId, dependsOnId]);
+  }
+
+
+  private save() {
+    if (this.db && this.dbPath) {
+        const data = this.db.export();
+        const buffer = Buffer.from(data);
+        fs.writeFileSync(this.dbPath, buffer);
+    }
+  }
+
+  private queryAll(sql: string, params: any[] = []): any[] {
+      if (!this.db) return [];
+      const stmt = this.db.prepare(sql);
+      stmt.bind(params);
+      const rows = [];
+      while (stmt.step()) {
+          rows.push(stmt.getAsObject());
+      }
+      stmt.free();
+      return rows;
+  }
+
+  private runQuery(sql: string, params: any[] = []) {
+      if (!this.db) return;
+      this.db.run(sql, params);
+      this.save();
   }
 }

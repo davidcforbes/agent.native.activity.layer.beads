@@ -15,6 +15,8 @@ const detDialog = document.getElementById("detailDialog");
 const detTitle = document.getElementById("detTitle");
 const detDesc = document.getElementById("detDesc");
 const detMeta = document.getElementById("detMeta");
+const addToChatBtn = document.getElementById("addToChatBtn");
+const copyContextBtn = document.getElementById("copyContextBtn");
 
 const filterPriority = document.getElementById("filterPriority");
 const filterType = document.getElementById("filterType");
@@ -22,6 +24,13 @@ const filterSearch = document.getElementById("filterSearch");
 
 let boardData = null;
 const collapsedColumns = new Set();
+// Configure market to use GFM breaks
+if (typeof marked !== 'undefined') {
+    marked.use({
+        breaks: true,
+        gfm: true
+    });
+}
 
 function requestId() {
     return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -303,69 +312,315 @@ window.addEventListener("message", (event) => {
 // Initial load
 
 function openDetail(card) {
-    console.log('Opening detail for card:', card);
     if (!card) return;
-    detTitle.textContent = card.title;
-    detDesc.textContent = card.description || "(No description)";
 
-    // Metadata
-    const fields = [
-        { label: "Status", value: card.status },
-        { label: "Priority", value: `P${card.priority}` },
-        { label: "Type", value: card.issue_type },
-        { label: "Assignee", value: card.assignee || "-" },
-        { label: "External Ref", value: card.external_ref || "-" },
-        { label: "Created", value: new Date(card.created_at).toLocaleString() },
-        { label: "Updated", value: new Date(card.updated_at).toLocaleString() }
+    // We will dynamically rebuild the form content to support editing
+    const form = detDialog.querySelector("form");
+
+    // Helper to safe string
+    const safe = (s) => escapeHtml(s || "");
+
+    const statusOptions = [
+        { v: "open", l: "Open" },
+        { v: "in_progress", l: "In Progress" },
+        { v: "blocked", l: "Blocked" },
+        { v: "closed", l: "Closed" }
     ];
 
-    let metaHtml = fields.map(f =>
-        `<div style="display:flex; flex-direction:column;">
-           <span style="font-size:10px; color:var(--muted); text-transform:uppercase;">${f.label}</span>
-           <span>${escapeHtml(f.value)}</span>
-         </div>`
-    ).join("");
+    const typeOptions = ["task", "bug", "feature"];
+    const priorityOptions = [0, 1, 2, 3, 4];
 
-    // Relationships section
-    if (card.parent || (card.children && card.children.length) || (card.blocked_by && card.blocked_by.length) || (card.blocks && card.blocks.length)) {
-        metaHtml += `<div style="grid-column: 1 / -1; margin-top: 10px; border-top: 1px solid var(--border);"></div>`;
+    form.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; gap: 8px; align-items: center;">
+                 <div style="flex: 1;">
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Title</label>
+                    <input id="editTitle" type="text" value="${safe(card.title)}" style="width: 100%; font-size: 16px; font-weight: bold; margin-top: 4px;" />
+                 </div>
+                 <div style="display: flex; flex-direction: column; width: 100px;">
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Status</label>
+                    <select id="editStatus" style="width: 100%; margin-top: 4px;">
+                        ${statusOptions.map(o => `<option value="${o.v}" ${card.status === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
+                    </select>
+                 </div>
+            </div>
 
-        if (card.parent) {
-            metaHtml += `<div style="grid-column: 1 / -1; margin-top: 5px;">
-                <span style="font-size:10px; color:var(--muted); text-transform:uppercase;">Parent</span><br>
-                <span>${escapeHtml(card.parent.title)}</span>
-            </div>`;
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                <div>
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Type</label>
+                    <input id="editType" list="typeList" value="${safe(card.issue_type)}" style="width: 100%; margin-top: 4px;" />
+                    <datalist id="typeList">
+                        ${typeOptions.map(t => `<option value="${t}"></option>`).join('')}
+                    </datalist>
+                </div>
+                <div>
+                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Priority</label>
+                     <select id="editPriority" style="width: 100%; margin-top: 4px;">
+                        ${priorityOptions.map(p => `<option value="${p}" ${card.priority === p ? 'selected' : ''}>P${p}</option>`).join('')}
+                     </select>
+                </div>
+                <div>
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Assignee</label>
+                    <input id="editAssignee" type="text" value="${safe(card.assignee)}" placeholder="Unassigned" style="width: 100%; margin-top: 4px;" />
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                 <div>
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Est. Minutes</label>
+                    <input id="editEst" type="number" value="${card.estimated_minutes || ''}" placeholder="Min" style="width: 100%; margin-top: 4px;" />
+                </div>
+                <div>
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Ext Ref</label>
+                    <input id="editExtRef" type="text" value="${safe(card.external_ref)}" placeholder="JIRA-123" style="width: 100%; margin-top: 4px;" />
+                </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid var(--border); margin: 4px 0;">
+
+            <div style="display: flex; gap: 12px; height: 300px;">
+                <div style="flex: 1; display: flex; flex-direction: column;">
+                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px;">Description</label>
+                     <textarea id="editDesc" style="flex: 1; font-family: inherit; resize: none;">${safe(card.description)}</textarea>
+                </div>
+                <div style="flex: 1; display: flex; flex-direction: column;">
+                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px;">Acceptance Criteria</label>
+                     <textarea id="editAC" style="flex: 1; font-family: inherit; resize: none;">${safe(card.acceptance_criteria)}</textarea>
+                </div>
+                <div style="flex: 1; display: flex; flex-direction: column;">
+                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px;">Design Notes</label>
+                     <textarea id="editDesign" style="flex: 1; font-family: inherit; resize: none;">${safe(card.design)}</textarea>
+                </div>
+            </div>
+
+                <div style="flex: 1; display: flex; flex-direction: column;">
+                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px;">Design Notes</label>
+                     <textarea id="editDesign" style="flex: 1; font-family: inherit; resize: none;">${safe(card.design)}</textarea>
+                </div>
+            </div>
+
+            <!-- Relationships & Tags -->
+            <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div>
+                         <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Tags</label>
+                         <div style="display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px 0;">
+                            ${(card.labels || []).map(l => `
+                                <span class="badge" style="background: var(--bg2); padding: 4px 8px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
+                                    #${escapeHtml(l)}
+                                    <span class="remove-label" data-label="${escapeHtml(l)}" style="cursor: pointer; opacity: 0.7;">&times;</span>
+                                </span>
+                            `).join('')}
+                         </div>
+                         <div style="display: flex; gap: 4px;">
+                            <input id="newLabel" type="text" placeholder="Add tag..." style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
+                            <button id="btnAddLabel" class="btn" style="padding: 2px 8px;">+</button>
+                         </div>
+                    </div>
+                    <div>
+                         <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Structure</label>
+                         
+                         <!-- Parent -->
+                         <div style="margin-bottom: 8px;">
+                            <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Parent: 
+                                ${card.parent ? `
+                                    <span style="color: var(--vscode-editor-foreground);">${escapeHtml(card.parent.title)}</span> 
+                                    <span id="removeParent" data-id="${card.parent.id}" style="cursor: pointer; color: var(--error); margin-left: 4px;">(Unlink)</span>
+                                ` : '<span style="font-style:italic;">None</span>'}
+                            </div>
+                            ${!card.parent ? `
+                                <div style="display: flex; gap: 4px;">
+                                    <input id="newParentId" type="text" placeholder="Parent Issue ID" style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
+                                    <button id="btnSetParent" class="btn" style="padding: 2px 8px;">Set</button>
+                                </div>
+                            ` : ''}
+                         </div>
+
+                         <!-- Blocker -->
+                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Blocked By:</div>
+                          <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
+                            ${(card.blocked_by || []).map(b => `
+                                <li>
+                                    ${escapeHtml(b.title)} 
+                                    <span class="remove-blocker" data-id="${b.id}" style="cursor: pointer; color: var(--error); margin-left: 4px;">&times;</span>
+                                </li>
+                            `).join('')}
+                          </ul>
+                          <div style="display: flex; gap: 4px;">
+                                <input id="newBlockerId" type="text" placeholder="Blocker Issue ID" style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
+                                <button id="btnAddBlocker" class="btn" style="padding: 2px 8px;">Add</button>
+                          </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Comments</label>
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 200px; overflow-y: auto;">
+                    ${card.comments && card.comments.length > 0 ? card.comments.map(c => `
+                        <div class="comment" style="padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--border);">
+                            <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px; display: flex; justify-content: space-between;">
+                                <span>${escapeHtml(c.author)}</span>
+                                <span>${new Date(c.created_at).toLocaleString()}</span>
+                            </div>
+                            <div class="markdown-body" style="font-size: 13px;">${marked.parse(c.text)}</div>
+                        </div>
+                    `).join('') : '<div style="font-size: 12px; color: var(--muted); font-style: italic;">No comments yet.</div>'}
+                </div>
+                
+                <div style="display: flex; gap: 8px;">
+                    <textarea id="newCommentText" rows="2" placeholder="Write a comment..." style="flex: 1; resize: vertical; margin: 0;"></textarea>
+                    <button type="button" id="btnPostComment" class="btn" style="align-self: flex-start; height: auto;">Post</button>
+                </div>
+            </div>
+
+            <div class="dialogActions" style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; gap: 8px;">
+                     <button type="button" id="btnSave" class="btn primary">Save Changes</button>
+                     <button type="button" id="btnClose" class="btn">Close</button>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                     <button type="button" id="btnChat" class="btn icon-btn" title="Add to Chat">💬 Chat</button>
+                     <button type="button" id="btnCopy" class="btn icon-btn" title="Copy Context">📋 Copy</button>
+                </div>
+            </div>
+            
+            <div style="font-size: 10px; color: var(--muted); text-align: right; margin-top: 8px;">
+               ID: ${card.id} | Created: ${new Date(card.created_at).toLocaleString()}
+            </div>
+        </div>
+    `;
+
+    // Bind events
+    form.querySelector("#btnClose").onclick = (e) => {
+        e.preventDefault();
+        detDialog.close();
+    };
+
+    form.querySelector("#btnSave").onclick = (e) => {
+        e.preventDefault();
+        const updates = {
+            title: document.getElementById("editTitle").value.trim(),
+            status: document.getElementById("editStatus").value,
+            issue_type: document.getElementById("editType").value,
+            priority: parseInt(document.getElementById("editPriority").value),
+            assignee: document.getElementById("editAssignee").value.trim() || null,
+            estimated_minutes: document.getElementById("editEst").value ? parseInt(document.getElementById("editEst").value) : null,
+            external_ref: document.getElementById("editExtRef").value.trim() || null,
+            description: document.getElementById("editDesc").value,
+            acceptance_criteria: document.getElementById("editAC").value,
+            design: document.getElementById("editDesign").value
+        };
+
+        if (updates.title) {
+            post("issue.update", { id: card.id, updates });
+            // Optimistic close? Or wait for refresh. Let's wait for refresh but close dialog now for responsiveness
+            detDialog.close();
+        } else {
+            toast("Title is required");
         }
+    };
 
-        if (card.children && card.children.length > 0) {
-            metaHtml += `<div style="grid-column: 1 / -1; margin-top: 5px;">
-                <span style="font-size:10px; color:var(--muted); text-transform:uppercase;">Children</span><br>
-                <ul style="margin:0; padding-left:15px;">
-                    ${card.children.map(c => `<li>${escapeHtml(c.title)}</li>`).join('')}
-                </ul>
-            </div>`;
-        }
+    form.querySelector("#btnPostComment").onclick = (e) => {
+        e.preventDefault();
+        const text = form.querySelector("#newCommentText").value.trim();
+        if (!text) return;
 
-        if (card.blocked_by && card.blocked_by.length > 0) {
-            metaHtml += `<div style="grid-column: 1 / -1; margin-top: 5px;">
-                <span style="font-size:10px; color:var(--muted); text-transform:uppercase;">Blocked By</span><br>
-                <ul style="margin:0; padding-left:15px; color: var(--error);">
-                    ${card.blocked_by.map(c => `<li>${escapeHtml(c.title)}</li>`).join('')}
-                </ul>
-            </div>`;
-        }
+        post("issue.addComment", { id: card.id, text, author: "Me" });
+        detDialog.close();
+        toast("Comment posted");
+    };
 
-        if (card.blocks && card.blocks.length > 0) {
-            metaHtml += `<div style="grid-column: 1 / -1; margin-top: 5px;">
-                <span style="font-size:10px; color:var(--muted); text-transform:uppercase;">Blocks</span><br>
-                <ul style="margin:0; padding-left:15px;">
-                    ${card.blocks.map(c => `<li>${escapeHtml(c.title)}</li>`).join('')}
-                </ul>
-            </div>`;
-        }
+    // Label Events
+    form.querySelector("#btnAddLabel").onclick = (e) => {
+        e.preventDefault();
+        const label = form.querySelector("#newLabel").value.trim();
+        if (!label) return;
+        post("issue.addLabel", { id: card.id, label });
+        detDialog.close();
+        toast("Label added");
+    };
+
+    form.querySelectorAll(".remove-label").forEach(btn => {
+        btn.onclick = (e) => {
+            const label = e.target.dataset.label;
+            post("issue.removeLabel", { id: card.id, label });
+            detDialog.close(); // Refresh
+        };
+    });
+
+    // Dependency Events
+    const btnSetParent = form.querySelector("#btnSetParent");
+    if (btnSetParent) {
+        btnSetParent.onclick = (e) => {
+            e.preventDefault();
+            const parentId = form.querySelector("#newParentId").value.trim();
+            if (!parentId) return;
+            // card is child, parentId is parent
+            post("issue.addDependency", { id: card.id, otherId: parentId, type: 'parent-child' });
+            detDialog.close();
+            toast("Parent set");
+        };
     }
 
-    detMeta.innerHTML = metaHtml;
+    const removeParentBtn = form.querySelector("#removeParent");
+    if (removeParentBtn) {
+        removeParentBtn.onclick = (e) => {
+            // Remove dependency where card=id and depends_on=parent.id
+            post("issue.removeDependency", { id: card.id, otherId: card.parent.id });
+            detDialog.close();
+            toast("Parent unlink");
+        };
+    }
+
+    form.querySelector("#btnAddBlocker").onclick = (e) => {
+        e.preventDefault();
+        const blockerId = form.querySelector("#newBlockerId").value.trim();
+        if (!blockerId) return;
+        // card BLOCKED BY blockerId => card depends on blockerId (type=blocks)
+        // Wait, schema: (issue_id, depends_on_id, type='blocks')
+        // Interpretation: issue_id IS BLOCKED BY depends_on_id.
+        post("issue.addDependency", { id: card.id, otherId: blockerId, type: 'blocks' });
+        detDialog.close();
+        toast("Blocker added");
+    };
+
+    form.querySelectorAll(".remove-blocker").forEach(btn => {
+        btn.onclick = (e) => {
+            const blockerId = e.target.dataset.id;
+            post("issue.removeDependency", { id: card.id, otherId: blockerId });
+            detDialog.close();
+        };
+    });
+
+    // Context Helpers
+    function getContext() {
+        return `Issue: ${card.title}
+ID: ${card.id}
+Status: ${card.status}
+Priority: P${card.priority}
+Type: ${card.issue_type}
+Assignee: ${card.assignee || 'Unassigned'}
+Description:
+${card.description || 'No description'}
+Acceptance Criteria:
+${card.acceptance_criteria || 'None'}
+Design:
+${card.design || 'None'}
+`;
+    }
+
+    form.querySelector("#btnChat").onclick = (e) => {
+        e.preventDefault();
+        post("issue.addToChat", { text: getContext() });
+        toast("Added to Chat input");
+    };
+
+    form.querySelector("#btnCopy").onclick = (e) => {
+        e.preventDefault();
+        post("issue.copyToClipboard", { text: getContext() });
+        toast("Copying...");
+    };
 
     detDialog.showModal();
 }
