@@ -8,7 +8,7 @@
   },
   "version": "0.0.2",
   "publisher": "AgentNativeAbstractionLayer",
-  "icon": "./media/icon.png",
+  "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.90.0"
   },
