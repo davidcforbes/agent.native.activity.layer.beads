@@ -1,12 +1,14 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import * as crypto from "crypto";
 
 export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "main.js"));
   const sortableUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "Sortable.min.js"));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "styles.css"));
 
-  const nonce = String(Date.now());
+  // Generate cryptographically secure nonce
+  const nonce = crypto.randomBytes(16).toString('hex');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -14,9 +16,12 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
-                 img-src ${webview.cspSource} https:;
+                 img-src ${webview.cspSource};
                  style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';">
+                 script-src 'nonce-${nonce}' https://cdn.jsdelivr.net;
+                 base-uri 'none';
+                 frame-ancestors 'none';
+                 form-action 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="${styleUri}" rel="stylesheet" />
   <title>Agent Native Abstraction Layer for Beads</title>
@@ -84,6 +89,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 
   <div id="toast" class="toast hidden"></div>
 
+  <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
   <script nonce="${nonce}" src="${sortableUri}"></script>
   <script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "marked.min.js"))}"></script>
   <script nonce="${nonce}" src="${scriptUri}"></script>

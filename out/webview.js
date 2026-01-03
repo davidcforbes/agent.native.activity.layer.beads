@@ -35,20 +35,25 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getWebviewHtml = getWebviewHtml;
 const vscode = __importStar(require("vscode"));
+const crypto = __importStar(require("crypto"));
 function getWebviewHtml(webview, extensionUri) {
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "main.js"));
     const sortableUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "Sortable.min.js"));
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "styles.css"));
-    const nonce = String(Date.now());
+    // Generate cryptographically secure nonce
+    const nonce = crypto.randomBytes(16).toString('hex');
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
-                 img-src ${webview.cspSource} https:;
+                 img-src ${webview.cspSource};
                  style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';">
+                 script-src 'nonce-${nonce}' https://cdn.jsdelivr.net;
+                 base-uri 'none';
+                 frame-ancestors 'none';
+                 form-action 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="${styleUri}" rel="stylesheet" />
   <title>Agent Native Abstraction Layer for Beads</title>
@@ -116,6 +121,7 @@ function getWebviewHtml(webview, extensionUri) {
 
   <div id="toast" class="toast hidden"></div>
 
+  <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
   <script nonce="${nonce}" src="${sortableUri}"></script>
   <script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "marked.min.js"))}"></script>
   <script nonce="${nonce}" src="${scriptUri}"></script>

@@ -24,7 +24,15 @@ const filterSearch = document.getElementById("filterSearch");
 
 let boardData = null;
 const collapsedColumns = new Set();
-// Configure market to use GFM breaks
+
+// Configure DOMPurify for safe HTML sanitization
+const purifyConfig = {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
+    ALLOWED_ATTR: ['href', 'title', 'class'],
+    ALLOW_DATA_ATTR: false
+};
+
+// Configure marked to use GFM breaks
 if (typeof marked !== 'undefined') {
     marked.use({
         breaks: true,
@@ -448,7 +456,7 @@ function openDetail(card) {
                                 <span>${escapeHtml(c.author)}</span>
                                 <span>${new Date(c.created_at).toLocaleString()}</span>
                             </div>
-                            <div class="markdown-body" style="font-size: 13px;">${marked.parse(c.text)}</div>
+                            <div class="markdown-body" style="font-size: 13px;">${DOMPurify.sanitize(marked.parse(c.text), purifyConfig)}</div>
                         </div>
                     `).join('') : '<div style="font-size: 12px; color: var(--muted); font-style: italic;">No comments yet.</div>'}
                 </div>
@@ -633,8 +641,8 @@ ${card.design || 'None'}
             const preview = form.querySelector(`#${targetId}-preview`);
 
             if (textarea.style.display !== "none") {
-                // Swith to Preview
-                preview.innerHTML = marked.parse(textarea.value);
+                // Switch to Preview
+                preview.innerHTML = DOMPurify.sanitize(marked.parse(textarea.value), purifyConfig);
                 textarea.style.display = "none";
                 preview.style.display = "block";
                 e.target.textContent = "Edit";

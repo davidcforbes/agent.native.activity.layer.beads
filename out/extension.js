@@ -39,6 +39,7 @@ const vscode = __importStar(require("vscode"));
 const net = __importStar(require("net"));
 const beadsAdapter_1 = require("./beadsAdapter");
 const webview_1 = require("./webview");
+const types_1 = require("./types");
 function activate(context) {
     net.setDefaultAutoSelectFamilyAttemptTimeout(1000);
     console.log('[BeadsAdapter] Environment Versions:', JSON.stringify(process.versions, null, 2));
@@ -76,10 +77,12 @@ function activate(context) {
             }
             try {
                 if (msg.type === "issue.create") {
-                    await adapter.createIssue({
-                        title: msg.payload.title,
-                        description: msg.payload.description ?? ""
-                    });
+                    const validation = types_1.IssueCreateSchema.safeParse(msg.payload);
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${validation.error.message}` });
+                        return;
+                    }
+                    await adapter.createIssue(validation.data);
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     // push refreshed board
                     await sendBoard(msg.requestId);
@@ -104,41 +107,88 @@ function activate(context) {
                     return;
                 }
                 if (msg.type === "issue.update") {
-                    await adapter.updateIssue(msg.payload.id, msg.payload.updates);
+                    const validation = types_1.IssueUpdateSchema.safeParse(msg.payload);
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${validation.error.message}` });
+                        return;
+                    }
+                    await adapter.updateIssue(validation.data.id, validation.data.updates);
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     await sendBoard(msg.requestId);
                     return;
                 }
                 if (msg.type === "issue.addComment") {
-                    // TODO: Attempt to get git user name or vs code user name? 
+                    // TODO: Attempt to get git user name or vs code user name?
                     // For now, default to "Me" or let UI send it?
                     // Let's use a simple default here if not provided.
                     const author = msg.payload.author || "User";
-                    await adapter.addComment(msg.payload.id, msg.payload.text, author);
+                    const validation = types_1.CommentAddSchema.safeParse({
+                        issueId: msg.payload.id,
+                        text: msg.payload.text,
+                        author
+                    });
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${validation.error.message}` });
+                        return;
+                    }
+                    await adapter.addComment(validation.data.issueId, validation.data.text, validation.data.author);
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     await sendBoard(msg.requestId);
                     return;
                 }
                 if (msg.type === "issue.addLabel") {
-                    await adapter.addLabel(msg.payload.id, msg.payload.label);
+                    const validation = types_1.LabelSchema.safeParse({
+                        issueId: msg.payload.id,
+                        label: msg.payload.label
+                    });
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
+                        return;
+                    }
+                    await adapter.addLabel(validation.data.issueId, validation.data.label);
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     await sendBoard(msg.requestId);
                     return;
                 }
                 if (msg.type === "issue.removeLabel") {
-                    await adapter.removeLabel(msg.payload.id, msg.payload.label);
+                    const validation = types_1.LabelSchema.safeParse({
+                        issueId: msg.payload.id,
+                        label: msg.payload.label
+                    });
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
+                        return;
+                    }
+                    await adapter.removeLabel(validation.data.issueId, validation.data.label);
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     await sendBoard(msg.requestId);
                     return;
                 }
                 if (msg.type === "issue.addDependency") {
-                    await adapter.addDependency(msg.payload.id, msg.payload.otherId, msg.payload.type);
+                    const validation = types_1.DependencySchema.safeParse({
+                        issueId: msg.payload.id,
+                        dependsOnId: msg.payload.otherId,
+                        type: msg.payload.type
+                    });
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
+                        return;
+                    }
+                    await adapter.addDependency(validation.data.issueId, validation.data.dependsOnId, validation.data.type);
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     await sendBoard(msg.requestId);
                     return;
                 }
                 if (msg.type === "issue.removeDependency") {
-                    await adapter.removeDependency(msg.payload.id, msg.payload.otherId);
+                    const validation = types_1.DependencySchema.safeParse({
+                        issueId: msg.payload.id,
+                        dependsOnId: msg.payload.otherId
+                    });
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
+                        return;
+                    }
+                    await adapter.removeDependency(validation.data.issueId, validation.data.dependsOnId);
                     post({ type: "mutation.ok", requestId: msg.requestId });
                     await sendBoard(msg.requestId);
                     return;
