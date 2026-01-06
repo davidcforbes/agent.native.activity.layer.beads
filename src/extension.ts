@@ -114,6 +114,9 @@ export function activate(context: vscode.ExtensionContext) {
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
+    // Track auto-start attempts to prevent infinite retry loops
+    let autoStartAttempted = false;
+
     // Update daemon status in status bar
     const updateDaemonStatus = async () => {
       try {
@@ -122,14 +125,42 @@ export function activate(context: vscode.ExtensionContext) {
           statusBarItem.text = "$(check) Beads Daemon";
           statusBarItem.tooltip = `Daemon running${status.pid ? ` (PID ${status.pid})` : ''}`;
           statusBarItem.backgroundColor = undefined;
+          autoStartAttempted = false; // Reset on successful connection
         } else if (status.running && !status.healthy) {
           statusBarItem.text = "$(warning) Beads Daemon";
           statusBarItem.tooltip = "Daemon unhealthy";
           statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
         } else {
+          // Daemon not running
           statusBarItem.text = "$(circle-slash) Beads Daemon";
           statusBarItem.tooltip = "Daemon not running";
           statusBarItem.backgroundColor = undefined;
+
+          // Auto-start daemon if configured to use it and haven't tried yet
+          if (useDaemonAdapter && !autoStartAttempted) {
+            autoStartAttempted = true;
+            output.appendLine('[Extension] Daemon not running, attempting auto-start...');
+            try {
+              await daemonManager.start();
+              output.appendLine('[Extension] Daemon started successfully');
+              // Update status immediately after starting
+              setTimeout(updateDaemonStatus, 1000); // Give daemon time to initialize
+            } catch (startError) {
+              output.appendLine(`[Extension] Failed to auto-start daemon: ${sanitizeError(startError)}`);
+              // Show notification with option to start manually
+              vscode.window.showWarningMessage(
+                'Beads daemon is not running. The extension requires the daemon when configured to use DaemonBeadsAdapter.',
+                'Start Daemon',
+                'Disable Daemon Mode'
+              ).then(action => {
+                if (action === 'Start Daemon') {
+                  vscode.commands.executeCommand('beadsKanban.showDaemonActions');
+                } else if (action === 'Disable Daemon Mode') {
+                  vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true);
+                }
+              });
+            }
+          }
         }
       } catch (e) {
         statusBarItem.text = "$(error) Beads Daemon";
@@ -159,6 +190,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand("beadsKanban.showDaemonActions", async () => {
         const actions = [
           { label: "$(info) Show Status", action: "status" },
+          { label: "$(play) Start Daemon", action: "start" },
           { label: "$(list-tree) List All Daemons", action: "list" },
           { label: "$(pulse) Check Health", action: "health" },
           { label: "$(debug-restart) Restart Daemon", action: "restart" },
@@ -180,6 +212,12 @@ export function activate(context: vscode.ExtensionContext) {
                 ? `Daemon is running${status.pid ? ` (PID ${status.pid})` : ''}`
                 : `Daemon is not running${status.error ? `: ${status.error}` : ''}`;
               vscode.window.showInformationMessage(msg);
+              break;
+            }
+            case "start": {
+              await daemonManager.start();
+              vscode.window.showInformationMessage("Daemon started");
+              updateDaemonStatus();
               break;
             }
             case "list": {

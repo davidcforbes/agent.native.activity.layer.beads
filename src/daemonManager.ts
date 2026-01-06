@@ -183,6 +183,13 @@ export class DaemonManager {
   /**
    * Restart the daemon for this workspace
    */
+  /**
+   * Start the daemon for this workspace
+   */
+  async start(): Promise<void> {
+    await spawnAsync('bd', ['daemon', '--start'], this.workspaceRoot);
+  }
+
   async restart(): Promise<void> {
     await spawnAsync('bd', ['daemons', 'restart', '.'], this.workspaceRoot);
   }
