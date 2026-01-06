@@ -363,8 +363,9 @@ export class BeadsAdapter {
       // Batch IDs to prevent SQLite variable limit errors (max ~999 variables)
       const idBatches = this.batchIds(ids, 500);
 
-      // Fetch labels in batches
-      for (const batch of idBatches) {
+      // Fetch labels in batches with event loop yields
+      for (let i = 0; i < idBatches.length; i++) {
+        const batch = idBatches[i];
         const placeholders = batch.map(() => "?").join(",");
         const labelRows = this.queryAll(`SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders}) ORDER BY label;`, batch) as Array<{ issue_id: string; label: string }>;
 
@@ -373,6 +374,11 @@ export class BeadsAdapter {
           arr.push(r.label);
           labelsByIssue.set(r.issue_id, arr);
         }
+
+        // Yield to event loop between batches to prevent UI freezing
+        if (i < idBatches.length - 1) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
       }
 
       // Fetch all relevant dependencies where either side is in our issue list
@@ -380,7 +386,8 @@ export class BeadsAdapter {
       // Actually, 'issues' query above fetches ALL issues (no WHERE clause except deleted_at IS NULL).
       // So 'ids' should check all.
 
-      for (const batch of idBatches) {
+      for (let i = 0; i < idBatches.length; i++) {
+        const batch = idBatches[i];
         const placeholders = batch.map(() => "?").join(",");
         const allDeps = this.queryAll(`
           SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
@@ -437,10 +444,16 @@ export class BeadsAdapter {
             blocksMap.set(d.depends_on_id, blocksList);
           }
         }
+
+        // Yield to event loop between batches to prevent UI freezing
+        if (i < idBatches.length - 1) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
       }
 
-      // Fetch comments for these issues in batches
-      for (const batch of idBatches) {
+      // Fetch comments for these issues in batches with event loop yields
+      for (let i = 0; i < idBatches.length; i++) {
+        const batch = idBatches[i];
         const placeholders = batch.map(() => "?").join(",");
         const allComments = this.queryAll(`
           SELECT id, issue_id, author, text, created_at
@@ -453,6 +466,11 @@ export class BeadsAdapter {
           const list = commentsByIssue.get(c.issue_id) ?? [];
           list.push(c);
           commentsByIssue.set(c.issue_id, list);
+        }
+
+        // Yield to event loop between batches to prevent UI freezing
+        if (i < idBatches.length - 1) {
+          await new Promise(resolve => setImmediate(resolve));
         }
       }
     }
