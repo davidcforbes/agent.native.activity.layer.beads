@@ -35,6 +35,7 @@ export class BeadsAdapter {
   private cacheTimestamp = 0;
   private lastSaveTime = 0;
   private lastKnownMtime = 0; // Track file modification time to detect external changes
+  private mutationVersion = 0; // Track mutation version to prevent race conditions in save
 
   constructor(private readonly output: vscode.OutputChannel) {}
 
@@ -692,13 +693,21 @@ export class BeadsAdapter {
     this.saveTimeout = setTimeout(() => {
       // Prevent concurrent saves
       if (this.isDirty && !this.isSaving) {
-        this.isDirty = false;  // Clear dirty flag before saving
+        // Capture mutation version BEFORE save to detect concurrent mutations
+        const versionAtSaveStart = this.mutationVersion;
+
         this.isSaving = true;
         try {
           this.save();
+
+          // Only clear dirty flag if no mutations happened during save
+          // If mutationVersion changed during save(), it means a new mutation occurred
+          // and we should NOT clear the dirty flag
+          if (this.mutationVersion === versionAtSaveStart) {
+            this.isDirty = false;
+          }
         } catch (error) {
-          // If save failed, mark as dirty again
-          this.isDirty = true;
+          // If save failed, leave isDirty=true so we retry
           // Error already logged and shown in save()
         } finally {
           this.isSaving = false;
@@ -739,12 +748,15 @@ export class BeadsAdapter {
       // Note: db.run() automatically frees prepared statements in sql.js
       // If you need to use db.prepare() manually in the future, you MUST call stmt.free()
       this.db.run(sql, params);
+
+      // Track mutation version to detect concurrent mutations during save
+      this.mutationVersion++;
       this.isDirty = true;
-      
+
       // Invalidate cache on mutation
       this.boardCache = null;
       this.cacheTimestamp = 0;
-      
+
       this.scheduleSave();
   }
 }
