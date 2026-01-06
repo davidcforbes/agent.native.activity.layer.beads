@@ -15,7 +15,7 @@ no-db: false
 
 # Disable daemon for RPC communication (forces direct database access)
 # Enable daemon for RPC communication
-no-daemon: true
+no-daemon: false
 
 # Disable auto-flush of database to JSONL after mutations
 # no-auto-flush: false
