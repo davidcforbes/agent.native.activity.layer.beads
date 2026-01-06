@@ -128,11 +128,14 @@ export interface BoardData {
 }
 
 // Zod validation schemas for runtime message validation
+const IssueIdSchema = z.string().min(1).max(200);
+
 export const IssueUpdateSchema = z.object({
-  id: z.string().uuid(),
+  id: IssueIdSchema,
   updates: z.object({
     title: z.string().max(500).optional(),
     description: z.string().max(10000).optional(),
+    status: z.enum(['open', 'in_progress', 'blocked', 'closed']).optional(),
     priority: z.number().int().min(0).max(4).optional(),
     issue_type: z.enum(['task', 'bug', 'feature', 'epic', 'chore']).optional(),
     assignee: z.string().max(100).nullable().optional(),
@@ -140,7 +143,7 @@ export const IssueUpdateSchema = z.object({
     acceptance_criteria: z.string().max(10000).optional(),
     design: z.string().max(10000).optional(),
     notes: z.string().max(10000).optional(),
-    external_ref: z.string().max(200).optional(),
+    external_ref: z.string().max(200).nullable().optional(),
     due_at: z.string().nullable().optional(),
     defer_until: z.string().nullable().optional()
   })
@@ -153,27 +156,33 @@ export const IssueCreateSchema = z.object({
   priority: z.number().int().min(0).max(4).optional(),
   issue_type: z.enum(['task', 'bug', 'feature', 'epic', 'chore']).optional(),
   assignee: z.string().max(100).nullable().optional(),
-  estimated_minutes: z.number().int().min(0).nullable().optional()
+  estimated_minutes: z.number().int().min(0).nullable().optional(),
+  acceptance_criteria: z.string().max(10000).optional(),
+  design: z.string().max(10000).optional(),
+  notes: z.string().max(10000).optional(),
+  external_ref: z.string().max(200).nullable().optional(),
+  due_at: z.string().nullable().optional(),
+  defer_until: z.string().nullable().optional()
 });
 
 export const SetStatusSchema = z.object({
-  id: z.string().uuid(),
+  id: IssueIdSchema,
   status: z.enum(['open', 'in_progress', 'blocked', 'closed'])
 });
 
 export const CommentAddSchema = z.object({
-  id: z.string().uuid(),
+  id: IssueIdSchema,
   text: z.string().min(1).max(10000),
   author: z.string().max(100)
 });
 
 export const LabelSchema = z.object({
-  id: z.string().uuid(),
+  id: IssueIdSchema,
   label: z.string().min(1).max(100)
 });
 
 export const DependencySchema = z.object({
-  id: z.string().uuid(),
-  otherId: z.string().uuid(),
+  id: IssueIdSchema,
+  otherId: IssueIdSchema,
   type: z.enum(['blocks', 'parent-child']).optional()
 });

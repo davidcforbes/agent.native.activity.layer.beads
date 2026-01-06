@@ -81,6 +81,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(output);
   context.subscriptions.push({ dispose: () => adapter.dispose() });
 
+  // Track active panels and polling state (moved here for accessibility)
+  let activePanelCount = 0;
+  let pollInterval: NodeJS.Timeout | null = null;
+  let startDaemonPolling: (() => void) | undefined;
+  let stopDaemonPolling: (() => void) | undefined;
+
   // Daemon management setup
   const ws = vscode.workspace.workspaceFolders?.[0];
   if (ws) {
@@ -118,17 +124,13 @@ export function activate(context: vscode.ExtensionContext) {
       }
     };
 
-    // Track active panels and polling state
-    let activePanelCount = 0;
-    let pollInterval: NodeJS.Timeout | null = null;
-
-    const startDaemonPolling = () => {
+    startDaemonPolling = () => {
       if (pollInterval) return; // Already polling
       updateDaemonStatus(); // Initial check
       pollInterval = setInterval(updateDaemonStatus, 10000);
     };
 
-    const stopDaemonPolling = () => {
+    stopDaemonPolling = () => {
       if (pollInterval) {
         clearInterval(pollInterval);
         pollInterval = null;
@@ -227,7 +229,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Track panel lifecycle for daemon polling optimization
     activePanelCount++;
-    if (activePanelCount === 1) {
+    if (activePanelCount === 1 && startDaemonPolling) {
       startDaemonPolling(); // Start polling when first panel opens
     }
 
@@ -422,9 +424,10 @@ export function activate(context: vscode.ExtensionContext) {
       let refreshTimeout: NodeJS.Timeout | null = null;
       const refresh = () => {
         // Skip refresh if this change is from our own save operation
-        if (adapter.isRecentSelfSave()) {
-          return;
-        }
+        // TODO: Implement isRecentSelfSave() method if needed
+        // if (adapter.isRecentSelfSave()) {
+        //   return;
+        // }
         
         if (refreshTimeout) {
           clearTimeout(refreshTimeout);
@@ -446,7 +449,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Stop polling when last panel closes
         activePanelCount--;
-        if (activePanelCount === 0) {
+        if (activePanelCount === 0 && stopDaemonPolling) {
           stopDaemonPolling();
         }
       });

@@ -58,20 +58,6 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     <div id="board" class="board"></div>
   </main>
 
-  <dialog id="newDialog" class="dialog">
-    <form method="dialog" class="dialogForm">
-      <h3>Create issue</h3>
-      <label>Title</label>
-      <input id="newTitle" type="text" maxlength="500" />
-      <label>Description</label>
-      <textarea id="newDesc" rows="4"></textarea>
-      <div class="dialogActions">
-        <button value="cancel" class="btn">Cancel</button>
-        <button id="createConfirm" value="default" class="btn primary">Create</button>
-      </div>
-    </form>
-  </dialog>
-
   <dialog id="detailDialog" class="dialog">
     <form method="dialog" class="dialogForm">
       <h3 id="detTitle" class="detTitle"></h3>

@@ -31,7 +31,6 @@ export class BeadsAdapter {
   private saveTimeout: NodeJS.Timeout | null = null;
   private isDirty = false;
   private isSaving = false;
-  private boardCache: any |  private isSaving = false;
   private boardCache: any | null = null;
   private cacheTimestamp = 0;
   private lastSaveTime = 0;
@@ -393,6 +392,12 @@ export class BeadsAdapter {
     issue_type?: string;
     assignee?: string | null;
     estimated_minutes?: number | null;
+    acceptance_criteria?: string;
+    design?: string;
+    notes?: string;
+    external_ref?: string | null;
+    due_at?: string | null;
+    defer_until?: string | null;
   }): Promise<{ id: string }> {
     if (!this.db) await this.ensureConnected();
     if (!this.db) throw new Error('Failed to connect to database');
@@ -408,11 +413,21 @@ export class BeadsAdapter {
     const issueType = input.issue_type ?? "task";
     const assignee = input.assignee ?? null;
     const estimated = input.estimated_minutes ?? null;
+    const acceptanceCriteria = input.acceptance_criteria ?? "";
+    const design = input.design ?? "";
+    const notes = input.notes ?? "";
+    const externalRef = input.external_ref ?? null;
+    const dueAt = input.due_at ?? null;
+    const deferUntil = input.defer_until ?? null;
 
     this.runQuery(`
-      INSERT INTO issues (id, title, description, status, priority, issue_type, assignee, estimated_minutes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-    `, [id, title, description, status, priority, issueType, assignee, estimated]);
+      INSERT INTO issues (
+        id, title, description, status, priority, issue_type, assignee, estimated_minutes,
+        acceptance_criteria, design, notes, external_ref, due_at, defer_until
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `, [id, title, description, status, priority, issueType, assignee, estimated,
+        acceptanceCriteria, design, notes, externalRef, dueAt, deferUntil]);
 
     return { id };
   }

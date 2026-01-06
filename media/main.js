@@ -6,11 +6,6 @@ const refreshBtn = document.getElementById("refreshBtn");
 const newBtn = document.getElementById("newBtn");
 const toastEl = document.getElementById("toast");
 
-const dialog = document.getElementById("newDialog");
-const newTitle = document.getElementById("newTitle");
-const newDesc = document.getElementById("newDesc");
-const createConfirm = document.getElementById("createConfirm");
-
 const detDialog = document.getElementById("detailDialog");
 const detTitle = document.getElementById("detTitle");
 const detDesc = document.getElementById("detDesc");
@@ -419,27 +414,37 @@ function escapeHtml(s) {
 
 refreshBtn.addEventListener("click", () => post("board.refresh"));
 newBtn.addEventListener("click", () => {
-    newTitle.value = "";
-    newDesc.value = "";
-    newDesc.value = "";
-    dialog.showModal();
+    // Use full detail form for creating new issues
+    const emptyCard = {
+        id: null, // null indicates create mode
+        title: "",
+        description: "",
+        status: "open",
+        priority: 2,
+        issue_type: "task",
+        assignee: null,
+        estimated_minutes: null,
+        external_ref: null,
+        due_at: null,
+        defer_until: null,
+        acceptance_criteria: "",
+        design: "",
+        notes: "",
+        labels: [],
+        comments: [],
+        blocked_by: [],
+        blocks: [],
+        children: [],
+        parent: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+    };
+    openDetail(emptyCard);
 });
 
 filterPriority.addEventListener("change", render);
 filterType.addEventListener("change", render);
 filterSearch.addEventListener("input", render);
-
-createConfirm.addEventListener("click", (e) => {
-    // dialog will close automatically due to method=dialog
-    const title = newTitle.value.trim();
-    const description = newDesc.value ?? "";
-    if (!title) {
-        e.preventDefault();
-        toast("Title is required.");
-        return;
-    }
-    post("issue.create", { title, description });
-});
 
 window.addEventListener("message", (event) => {
     const msg = event.data;
@@ -515,8 +520,11 @@ function openDetail(card) {
     const typeOptions = ["task", "bug", "feature", "epic", "chore"];
     const priorityOptions = [0, 1, 2, 3, 4];
 
+    const isCreateMode = card.id === null;
+    
     form.innerHTML = `
         <div style="display: flex; flex-direction: column; gap: 12px;">
+            <h3 style="margin: 0 0 12px 0;">${isCreateMode ? 'Create New Issue' : 'Edit Issue'}</h3>
             <div style="display: flex; gap: 8px; align-items: center;">
                  <div style="flex: 1;">
                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Title</label>
@@ -593,7 +601,7 @@ function openDetail(card) {
 
             <!-- Relationships & Tags -->
             <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <div style="display: grid; grid-template-columns: ${isCreateMode ? '1fr' : '1fr 1fr'}; gap: 12px;">
                     <div>
                          <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Tags</label>
                          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px 0;">
@@ -609,8 +617,8 @@ function openDetail(card) {
                             <button id="btnAddLabel" class="btn" style="padding: 2px 8px;">+</button>
                          </div>
                     </div>
-                    <div>
-                         <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Structure</label>
+                    ${!isCreateMode ? `<div>
+                         <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Structure</label>` : ''}
                          
                          <!-- Parent -->
                          <div style="margin-bottom: 8px;">
@@ -662,7 +670,7 @@ function openDetail(card) {
                               `).join('')}
                             </ul>
                           ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
-                    </div>
+                    </div>` : ''}
                 </div>
             </div>
 
@@ -703,8 +711,9 @@ function openDetail(card) {
                 `;
             })()}
 
+${!isCreateMode ? `
             <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
-                <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Comments</label>
+                <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Comments</label>` : ''}
                 <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 200px; overflow-y: auto;">
                     ${card.comments && card.comments.length > 0 ? card.comments.map(c => `
                         <div class="comment" style="padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--border);">
@@ -721,11 +730,11 @@ function openDetail(card) {
                     <textarea id="newCommentText" rows="2" placeholder="Write a comment..." style="flex: 1; resize: vertical; margin: 0;"></textarea>
                     <button type="button" id="btnPostComment" class="btn" style="align-self: flex-start; height: auto;">Post</button>
                 </div>
-            </div>
+            </div>` : ''}
 
             <div class="dialogActions" style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; gap: 8px;">
-                     <button type="button" id="btnSave" class="btn primary">Save Changes</button>
+                     <button type="button" id="btnSave" class="btn primary">${isCreateMode ? 'Create Issue' : 'Save Changes'}</button>
                      <button type="button" id="btnClose" class="btn">Close</button>
                 </div>
                 <div style="display: flex; gap: 8px;">
@@ -734,11 +743,12 @@ function openDetail(card) {
                 </div>
             </div>
             
+            ${!isCreateMode ? `
             <div style="font-size: 10px; color: var(--muted); text-align: right; margin-top: 8px; line-height: 1.5;">
                ID: ${card.id}<br>
                Created: ${new Date(card.created_at).toLocaleString()}<br>
                Updated: ${new Date(card.updated_at).toLocaleString()}${card.closed_at ? `<br>Closed: ${new Date(card.closed_at).toLocaleString()}` : ''}
-            </div>
+            </div>` : ''}
         </div>
     `;
 
@@ -750,7 +760,7 @@ function openDetail(card) {
 
     form.querySelector("#btnSave").onclick = async (e) => {
         e.preventDefault();
-        const updates = {
+        const data = {
             title: document.getElementById("editTitle").value.trim(),
             status: document.getElementById("editStatus").value,
             issue_type: document.getElementById("editType").value,
@@ -766,22 +776,31 @@ function openDetail(card) {
             notes: document.getElementById("editNotes").value
         };
 
-        if (updates.title) {
+        if (data.title) {
             try {
-                await postAsync("issue.update", { id: card.id, updates });
-                toast("Changes saved successfully");
+                if (isCreateMode) {
+                    // Create new issue
+                    await postAsync("issue.create", data);
+                    toast("Issue created successfully");
+                } else {
+                    // Update existing issue
+                    await postAsync("issue.update", { id: card.id, updates: data });
+                    toast("Changes saved successfully");
+                }
                 detDialog.close();
             } catch (err) {
                 // Show error feedback (mutation.error toast or timeout/network error)
-                console.error("Save failed:", err);
-                toast(`Failed to save changes: ${err.message}`);
+                console.error(isCreateMode ? "Create failed:" : "Save failed:", err);
+                toast(`Failed to ${isCreateMode ? 'create issue' : 'save changes'}: ${err.message}`);
             }
         } else {
             toast("Title is required");
         }
     };
 
-    form.querySelector("#btnPostComment").onclick = async (e) => {
+const btnPostComment = form.querySelector("#btnPostComment");
+    if (btnPostComment) {
+        btnPostComment.onclick = async (e) => {
         e.preventDefault();
         const text = form.querySelector("#newCommentText").value.trim();
         if (!text) return;
@@ -795,9 +814,12 @@ function openDetail(card) {
             toast(`Failed to add comment: ${err.message}`);
         }
     };
+    }
 
-    // Label Events - supports comma-separated multiple labels
-    form.querySelector("#btnAddLabel").onclick = async (e) => {
+// Label Events - supports comma-separated multiple labels
+    const btnAddLabel = form.querySelector("#btnAddLabel");
+    if (btnAddLabel) {
+        btnAddLabel.onclick = async (e) => {
         e.preventDefault();
         const input = form.querySelector("#newLabel");
         const rawLabels = input.value.trim();
@@ -840,6 +862,7 @@ function openDetail(card) {
 
         // Keep dialog open for adding more labels
     };
+    }
 
     form.querySelectorAll(".remove-label").forEach(btn => {
         btn.onclick = async (e) => {
@@ -888,7 +911,9 @@ function openDetail(card) {
         };
     }
 
-    form.querySelector("#btnAddBlocker").onclick = async (e) => {
+const btnAddBlocker = form.querySelector("#btnAddBlocker");
+    if (btnAddBlocker) {
+        btnAddBlocker.onclick = async (e) => {
         e.preventDefault();
         const blockerId = form.querySelector("#newBlockerId").value.trim();
         if (!blockerId) return;
@@ -901,6 +926,7 @@ function openDetail(card) {
             toast(`Failed to add blocker: ${err.message}`);
         }
     };
+    }
 
     form.querySelectorAll(".remove-blocker").forEach(btn => {
         btn.onclick = async (e) => {
