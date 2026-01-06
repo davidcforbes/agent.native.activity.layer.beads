@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { BeadsAdapter } from "./beadsAdapter";
+import { DaemonBeadsAdapter } from "./daemonBeadsAdapter";
 import { DaemonManager } from "./daemonManager";
 import { getWebviewHtml } from "./webview";
 import {
@@ -76,7 +77,21 @@ function sanitizeError(error: unknown): string {
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("Beads Kanban");
   output.appendLine('[BeadsAdapter] Environment Versions: ' + JSON.stringify(process.versions, null, 2));
-  const adapter = new BeadsAdapter(output);
+
+  // Determine which adapter to use based on configuration
+  const config = vscode.workspace.getConfiguration('beadsKanban');
+  const useDaemonAdapter = config.get<boolean>('useDaemonAdapter', false);
+
+  const ws = vscode.workspace.workspaceFolders?.[0];
+  let adapter: BeadsAdapter | DaemonBeadsAdapter;
+
+  if (useDaemonAdapter && ws) {
+    output.appendLine('[Extension] Using DaemonBeadsAdapter');
+    adapter = new DaemonBeadsAdapter(ws.uri.fsPath, output);
+  } else {
+    output.appendLine('[Extension] Using BeadsAdapter (sql.js)');
+    adapter = new BeadsAdapter(output);
+  }
 
   context.subscriptions.push(output);
   context.subscriptions.push({ dispose: () => adapter.dispose() });
@@ -88,7 +103,6 @@ export function activate(context: vscode.ExtensionContext) {
   let stopDaemonPolling: (() => void) | undefined;
 
   // Daemon management setup
-  const ws = vscode.workspace.workspaceFolders?.[0];
   if (ws) {
     const daemonManager = new DaemonManager(ws.uri.fsPath);
 

@@ -135,6 +135,20 @@ export class BeadsAdapter {
         const reason = `File opened but 'issues' table missing. Tables found: [${tableNames}]`;
 
         this.output.appendLine(`[BeadsAdapter] ${p}: ${reason}`);
+        failureReasons.push(`${path.basename(p)}: ${reason}`);
+
+        db.close();
+      } catch (e) {
+        const msg = String(e instanceof Error ? e.message : e);
+        this.output.appendLine(`[BeadsAdapter] Candidate DB failed: ${p} (${msg})`);
+        failureReasons.push(`${path.basename(p)}: ${msg}`);
+      }
+    }
+
+    const fullError = `Could not find a valid Beads DB in .beads. Searched: ${candidatePaths.map(x => path.basename(x)).join(', ')}. Details:\n${failureReasons.join('\n')}`;
+    this.output.appendLine(`[BeadsAdapter] ERROR: ${fullError}`);
+    throw new Error(fullError);
+  }
 
   /**
    * Reload the database from disk to pick up external changes.
@@ -149,7 +163,7 @@ export class BeadsAdapter {
 
     try {
       this.output.appendLine(`[BeadsAdapter] Reloading database from ${this.dbPath}`);
-      
+
       // Close current database if exists
       if (this.db) {
         this.db.close();
@@ -166,7 +180,7 @@ export class BeadsAdapter {
 
       // Verify issues table still exists
       const res = db.exec("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='issues' LIMIT 1;");
-      
+
       if (res.length === 0 || res[0].values.length === 0 || res[0].values[0][0] !== 1) {
         db.close();
         throw new Error('Database reloaded but issues table is missing');
@@ -181,20 +195,6 @@ export class BeadsAdapter {
       this.dbPath = null;
       await this.ensureConnected();
     }
-  }
-        failureReasons.push(`${path.basename(p)}: ${reason}`);
-        
-        db.close();
-      } catch (e) {
-        const msg = String(e instanceof Error ? e.message : e);
-        this.output.appendLine(`[BeadsAdapter] Candidate DB failed: ${p} (${msg})`);
-        failureReasons.push(`${path.basename(p)}: ${msg}`);
-      }
-    }
-
-    const fullError = `Could not find a valid Beads DB in .beads. Searched: ${candidatePaths.map(x => path.basename(x)).join(', ')}. Details:\n${failureReasons.join('\n')}`;
-    this.output.appendLine(`[BeadsAdapter] ERROR: ${fullError}`);
-    throw new Error(fullError);
   }
 
   /**
@@ -274,7 +274,6 @@ export class BeadsAdapter {
       this.output.appendLine(`[BeadsAdapter] ERROR: ${msg}`);
       throw new Error(msg);
     }
-  }
   }
 
   public getConnectedDbPath(): string | null {
