@@ -36,6 +36,25 @@ type ExtMsg =
 const MAX_CHAT_TEXT = 50_000; // 50KB reasonable for chat
 const MAX_CLIPBOARD_TEXT = 100_000; // 100KB for clipboard
 
+// Sanitize error messages to prevent leaking implementation details
+function sanitizeError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  
+  // Remove file paths (C:\..., /home/..., \\..., etc.)
+  const sanitized = msg
+    .replace(/[A-Za-z]:\\[^\s]+/g, '[PATH]')
+    .replace(/\/[^\s]+\.(ts|js|tsx|jsx)/g, '[FILE]')
+    .replace(/\\[^\s]+\.(ts|js|tsx|jsx)/g, '[FILE]')
+    .replace(/\s+at\s+.*/g, ''); // Remove stack trace lines
+  
+  // Return a generic message if nothing is left or if it looks like implementation details
+  if (sanitized.trim().length === 0 || sanitized.includes('ENOENT') || sanitized.includes('EACCES')) {
+    return 'An error occurred while processing your request.';
+  }
+  
+  return sanitized.trim();
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("Beads Kanban");
   output.appendLine('[BeadsAdapter] Environment Versions: ' + JSON.stringify(process.versions, null, 2));
@@ -66,7 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
         const data = await adapter.getBoard();
         post({ type: "board.data", requestId, payload: data });
       } catch (e) {
-        post({ type: "mutation.error", requestId, error: String(e instanceof Error ? e.message : e) });
+        post({ type: "mutation.error", requestId, error: sanitizeError(e) });
       }
     };
 
@@ -232,7 +251,7 @@ export function activate(context: vscode.ExtensionContext) {
         post({
           type: "mutation.error",
           requestId: msg.requestId,
-          error: String(e instanceof Error ? e.message : e)
+          error: sanitizeError(e)
         });
       }
     });

@@ -66,11 +66,27 @@ function toast(msg, actionName, actionCb) {
     }
 
     toastEl.classList.remove("hidden");
-    // Auto-hide after 5s if not interacted
-    setTimeout(() => {
-        // Simple check to avoid hiding if user is hovering? simplified for now
-        toastEl.classList.add("hidden");
-    }, 5000);
+
+    // Auto-hide with hover detection
+    let isHovering = false;
+    const onMouseEnter = () => { isHovering = true; };
+    const onMouseLeave = () => { isHovering = false; };
+
+    toastEl.addEventListener('mouseenter', onMouseEnter);
+    toastEl.addEventListener('mouseleave', onMouseLeave);
+
+    const hideToast = () => {
+        if (!isHovering) {
+            toastEl.classList.add("hidden");
+            toastEl.removeEventListener('mouseenter', onMouseEnter);
+            toastEl.removeEventListener('mouseleave', onMouseLeave);
+        } else {
+            // Check again in 1 second if still hovering
+            setTimeout(hideToast, 1000);
+        }
+    };
+
+    setTimeout(hideToast, 5000);
 }
 
 function columnForCard(card) {
@@ -360,10 +376,9 @@ function openDetail(card) {
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
                 <div>
                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Type</label>
-                    <input id="editType" list="typeList" value="${safe(card.issue_type)}" style="width: 100%; margin-top: 4px;" />
-                    <datalist id="typeList">
-                        ${typeOptions.map(t => `<option value="${t}"></option>`).join('')}
-                    </datalist>
+                    <select id="editType" style="width: 100%; margin-top: 4px;">
+                        ${typeOptions.map(t => `<option value="${t}" ${card.issue_type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
                 </div>
                 <div>
                      <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Priority</label>
@@ -447,6 +462,26 @@ function openDetail(card) {
                                 <input id="newBlockerId" type="text" placeholder="Blocker Issue ID" style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
                                 <button id="btnAddBlocker" class="btn" style="padding: 2px 8px;">Add</button>
                           </div>
+
+                          <!-- Blocks (issues this item blocks) -->
+                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px; margin-top: 12px;">Blocks:</div>
+                          ${(card.blocks && card.blocks.length > 0) ? `
+                            <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
+                              ${card.blocks.map(b => `
+                                  <li>${escapeHtml(b.title)}</li>
+                              `).join('')}
+                            </ul>
+                          ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
+
+                          <!-- Children (sub-issues) -->
+                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px; margin-top: 12px;">Children:</div>
+                          ${(card.children && card.children.length > 0) ? `
+                            <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
+                              ${card.children.map(c => `
+                                  <li>${escapeHtml(c.title)}</li>
+                              `).join('')}
+                            </ul>
+                          ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
                     </div>
                 </div>
             </div>

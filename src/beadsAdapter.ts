@@ -5,6 +5,25 @@ import * as vscode from "vscode";
 import { v4 as uuidv4 } from "uuid";
 import { BoardCard, BoardData, BoardColumn, IssueRow, IssueStatus, Comment } from "./types";
 
+// Sanitize error messages to prevent leaking implementation details
+function sanitizeError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  
+  // Remove file paths (C:\..., /home/..., \\..., etc.)
+  const sanitized = msg
+    .replace(/[A-Za-z]:\\[^\s]+/g, '[PATH]')
+    .replace(/\/[^\s]+\.(ts|js|tsx|jsx|db|sqlite|sqlite3)/g, '[FILE]')
+    .replace(/\\[^\s]+\.(ts|js|tsx|jsx|db|sqlite|sqlite3)/g, '[FILE]')
+    .replace(/\s+at\s+.*/g, ''); // Remove stack trace lines
+  
+  // Return a generic message if nothing is left or if it looks like system errors
+  if (sanitized.trim().length === 0 || sanitized.includes('ENOENT') || sanitized.includes('EACCES')) {
+    return 'An error occurred while processing your request.';
+  }
+  
+  return sanitized.trim();
+}
+
 export class BeadsAdapter {
   private db: Database | null = null;
   private dbPath: string | null = null;
@@ -422,8 +441,8 @@ export class BeadsAdapter {
       const msg = `Failed to save database: ${error instanceof Error ? error.message : String(error)}`;
       this.output.appendLine(`[BeadsAdapter] ERROR: ${msg}`);
 
-      // Show user-visible error
-      vscode.window.showErrorMessage(`Beads Kanban: ${msg}`);
+      // Show user-visible error (sanitized)
+      vscode.window.showErrorMessage(`Beads Kanban: ${sanitizeError(error)}`);
 
       // Re-throw to prevent silent data loss
       throw new Error(msg);
