@@ -22,6 +22,9 @@ export interface IssueRow {
 
   is_ready: number; // 0/1
   blocked_by_count: number; // integer
+  pinned: number | null; // 0/1
+  is_template: number | null; // 0/1
+  ephemeral: number | null; // 0/1
 }
 
 export interface BoardCard {
@@ -43,6 +46,9 @@ export interface BoardCard {
   is_ready: boolean;
   blocked_by_count: number;
   labels: string[];
+  pinned?: boolean;
+  is_template?: boolean;
+  ephemeral?: boolean;
 
   // Relationships
   parent?: { id: string; title: string };

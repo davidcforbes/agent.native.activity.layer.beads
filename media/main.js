@@ -260,6 +260,11 @@ function render() {
             if (card.external_ref) badges.push({ text: card.external_ref });
             for (const l of (card.labels || []).slice(0, 4)) badges.push({ text: `#${l}` });
 
+            // Flag badges
+            if (card.pinned) badges.push({ text: '📌 Pinned', cls: 'badge-flag' });
+            if (card.is_template) badges.push({ text: '📄 Template', cls: 'badge-flag' });
+            if (card.ephemeral) badges.push({ text: '⏱ Ephemeral', cls: 'badge-flag' });
+
             // Parent info
             let parentHtml = "";
             if (card.parent) {
@@ -400,6 +405,17 @@ function openDetail(card) {
                 <div>
                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Ext Ref</label>
                     <input id="editExtRef" type="text" value="${safe(card.external_ref)}" placeholder="JIRA-123" style="width: 100%; margin-top: 4px;" />
+                </div>
+            </div>
+
+            <!-- Flags -->
+            <div style="margin-top: 8px;">
+                <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Flags</label>
+                <div style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
+                    ${card.pinned ? '<span class="badge badge-flag" style="background: var(--bg2); padding: 4px 8px; border-radius: 4px;">📌 Pinned</span>' : ''}
+                    ${card.is_template ? '<span class="badge badge-flag" style="background: var(--bg2); padding: 4px 8px; border-radius: 4px;">📄 Template</span>' : ''}
+                    ${card.ephemeral ? '<span class="badge badge-flag" style="background: var(--bg2); padding: 4px 8px; border-radius: 4px;">⏱ Ephemeral</span>' : ''}
+                    ${!card.pinned && !card.is_template && !card.ephemeral ? '<span style="font-size: 11px; font-style: italic; color: var(--muted);">None</span>' : ''}
                 </div>
             </div>
 

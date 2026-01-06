@@ -162,7 +162,10 @@ export class BeadsAdapter {
           i.acceptance_criteria,
           i.design,
           CASE WHEN ri.id IS NOT NULL THEN 1 ELSE 0 END AS is_ready,
-          COALESCE(bi.blocked_by_count, 0) AS blocked_by_count
+          COALESCE(bi.blocked_by_count, 0) AS blocked_by_count,
+          i.pinned,
+          i.is_template,
+          i.ephemeral
         FROM issues i
         LEFT JOIN ready_issues ri ON ri.id = i.id
         LEFT JOIN blocked_issues bi ON bi.id = i.id
@@ -275,6 +278,9 @@ export class BeadsAdapter {
       acceptance_criteria: r.acceptance_criteria,
       design: r.design,
       labels: labelsByIssue.get(r.id) ?? [],
+      pinned: r.pinned === 1,
+      is_template: r.is_template === 1,
+      ephemeral: r.ephemeral === 1,
       parent: parentMap.get(r.id),
       children: childrenMap.get(r.id),
       blocked_by: blockedByMap.get(r.id),
