@@ -243,6 +243,24 @@ export class BeadsAdapter {
     }
   }
 
+  /**
+   * Batch large ID lists to prevent SQLite variable limit errors
+   * SQLite has a limit of ~999 variables per query (SQLITE_MAX_VARIABLE_NUMBER)
+   * @param ids Array of IDs to batch
+   * @param batchSize Maximum IDs per batch (default: 500)
+   * @returns Array of ID batches
+   */
+  private batchIds(ids: string[], batchSize: number = 500): string[][] {
+    if (ids.length === 0) return [];
+    
+    const batches: string[][] = [];
+    for (let i = 0; i < ids.length; i += batchSize) {
+      batches.push(ids.slice(i, i + batchSize));
+    }
+    
+    return batches;
+  }
+
   public async getBoard(): Promise<BoardData> {
     // Check cache (valid for 1 second to reduce DB queries during rapid operations)
     const now = Date.now();
@@ -342,90 +360,100 @@ export class BeadsAdapter {
     const commentsByIssue = new Map<string, Comment[]>();
 
     if (ids.length > 0) {
-      const placeholders = ids.map(() => "?").join(",");
+      // Batch IDs to prevent SQLite variable limit errors (max ~999 variables)
+      const idBatches = this.batchIds(ids, 500);
 
-      // Fetch labels
-      const labelRows = this.queryAll(`SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders}) ORDER BY label;`, ids) as Array<{ issue_id: string; label: string }>;
+      // Fetch labels in batches
+      for (const batch of idBatches) {
+        const placeholders = batch.map(() => "?").join(",");
+        const labelRows = this.queryAll(`SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders}) ORDER BY label;`, batch) as Array<{ issue_id: string; label: string }>;
 
-      for (const r of labelRows) {
-        const arr = labelsByIssue.get(r.issue_id) ?? [];
-        arr.push(r.label);
-        labelsByIssue.set(r.issue_id, arr);
+        for (const r of labelRows) {
+          const arr = labelsByIssue.get(r.issue_id) ?? [];
+          arr.push(r.label);
+          labelsByIssue.set(r.issue_id, arr);
+        }
       }
 
       // Fetch all relevant dependencies where either side is in our issue list
       // Note: We might miss titles if the "other side" isn't in 'ids' (filtered list?).
       // Actually, 'issues' query above fetches ALL issues (no WHERE clause except deleted_at IS NULL).
       // So 'ids' should check all.
-      
-      const allDeps = this.queryAll(`
-        SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
-               d.created_at, d.created_by, d.metadata, d.thread_id
-        FROM dependencies d
-        JOIN issues i1 ON i1.id = d.issue_id
-        JOIN issues i2 ON i2.id = d.depends_on_id
-        WHERE (d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders}));
-      `, [...ids, ...ids]) as {
-        issue_id: string;
-        depends_on_id: string;
-        type: string;
-        issue_title: string;
-        depends_title: string;
-        created_at: string;
-        created_by: string;
-        metadata: string;
-        thread_id: string;
-      }[];
 
-      for (const d of allDeps) {
-        const child: DependencyInfo = {
-          id: d.issue_id,
-          title: d.issue_title,
-          created_at: d.created_at,
-          created_by: d.created_by,
-          metadata: d.metadata,
-          thread_id: d.thread_id
-        };
-        const parent: DependencyInfo = {
-          id: d.depends_on_id,
-          title: d.depends_title,
-          created_at: d.created_at,
-          created_by: d.created_by,
-          metadata: d.metadata,
-          thread_id: d.thread_id
-        };
+      for (const batch of idBatches) {
+        const placeholders = batch.map(() => "?").join(",");
+        const allDeps = this.queryAll(`
+          SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
+                 d.created_at, d.created_by, d.metadata, d.thread_id
+          FROM dependencies d
+          JOIN issues i1 ON i1.id = d.issue_id
+          JOIN issues i2 ON i2.id = d.depends_on_id
+          WHERE (d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders}));
+        `, [...batch, ...batch]) as {
+          issue_id: string;
+          depends_on_id: string;
+          type: string;
+          issue_title: string;
+          depends_title: string;
+          created_at: string;
+          created_by: string;
+          metadata: string;
+          thread_id: string;
+        }[];
 
-        if (d.type === 'parent-child') {
-          // issue_id is child, depends_on_id is parent
-          parentMap.set(d.issue_id, parent);
-          
-          const list = childrenMap.get(d.depends_on_id) ?? [];
-          list.push(child);
-          childrenMap.set(d.depends_on_id, list);
-        } else if (d.type === 'blocks') {
-          // issue_id is BLOCKED BY depends_on_id
-          const blockedByList = blockedByMap.get(d.issue_id) ?? [];
-          blockedByList.push(parent); // parent here is just the blocker (depends_on_id)
-          blockedByMap.set(d.issue_id, blockedByList);
+        for (const d of allDeps) {
+          const child: DependencyInfo = {
+            id: d.issue_id,
+            title: d.issue_title,
+            created_at: d.created_at,
+            created_by: d.created_by,
+            metadata: d.metadata,
+            thread_id: d.thread_id
+          };
+          const parent: DependencyInfo = {
+            id: d.depends_on_id,
+            title: d.depends_title,
+            created_at: d.created_at,
+            created_by: d.created_by,
+            metadata: d.metadata,
+            thread_id: d.thread_id
+          };
 
-          const blocksList = blocksMap.get(d.depends_on_id) ?? [];
-          blocksList.push(child); // child here is the blocked one (issue_id)
-          blocksMap.set(d.depends_on_id, blocksList);
+          if (d.type === 'parent-child') {
+            // issue_id is child, depends_on_id is parent
+            parentMap.set(d.issue_id, parent);
+
+            const list = childrenMap.get(d.depends_on_id) ?? [];
+            list.push(child);
+            childrenMap.set(d.depends_on_id, list);
+          } else if (d.type === 'blocks') {
+            // issue_id is BLOCKED BY depends_on_id
+            const blockedByList = blockedByMap.get(d.issue_id) ?? [];
+            blockedByList.push(parent); // parent here is just the blocker (depends_on_id)
+            blockedByMap.set(d.issue_id, blockedByList);
+
+            const blocksList = blocksMap.get(d.depends_on_id) ?? [];
+            blocksList.push(child); // child here is the blocked one (issue_id)
+            blocksMap.set(d.depends_on_id, blocksList);
+          }
         }
       }
-      
-      // Fetch comments for these issues
-      const allComments = this.queryAll(`
-        SELECT id, issue_id, author, text, created_at
-        FROM comments
-        WHERE issue_id IN (${placeholders})
-        ORDER BY created_at ASC;
-      `, ids) as Comment[];
 
-      for (const c of allComments) {
-        const list = commentsByIssue.get(c.issue_id) ?? [];
-        list.push(c);
-        commentsByIssue.set(c.issue_id, list);
+      // Fetch comments for these issues in batches
+      for (const batch of idBatches) {
+        const placeholders = batch.map(() => "?").join(",");
+        const allComments = this.queryAll(`
+          SELECT id, issue_id, author, text, created_at
+          FROM comments
+          WHERE issue_id IN (${placeholders})
+          ORDER BY created_at ASC;
+        `, batch) as Comment[];
+
+        for (const c of allComments) {
+          const list = commentsByIssue.get(c.issue_id) ?? [];
+          list.push(c);
+          commentsByIssue.set(c.issue_id, list);
+        }
       }
     }
 
