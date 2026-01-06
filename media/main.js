@@ -353,6 +353,19 @@ function openDetail(card) {
     // Helper to safe string
     const safe = (s) => escapeHtml(s || "");
 
+    // Helper to format dependency with metadata
+    const formatDep = (dep) => {
+        let result = escapeHtml(dep.title);
+        const meta = [];
+        if (dep.created_at) meta.push(`Created: ${new Date(dep.created_at).toLocaleString()}`);
+        if (dep.created_by) meta.push(`By: ${escapeHtml(dep.created_by)}`);
+        if (dep.thread_id) meta.push(`Thread: ${escapeHtml(dep.thread_id)}`);
+        if (meta.length > 0) {
+            result += ` <span style="font-size: 10px; color: var(--muted); font-style: italic;">(${meta.join(', ')})</span>`;
+        }
+        return result;
+    };
+
     const statusOptions = [
         { v: "open", l: "Open" },
         { v: "in_progress", l: "In Progress" },
@@ -450,9 +463,9 @@ function openDetail(card) {
                          
                          <!-- Parent -->
                          <div style="margin-bottom: 8px;">
-                            <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Parent: 
+                            <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Parent:
                                 ${card.parent ? `
-                                    <span style="color: var(--vscode-editor-foreground);">${escapeHtml(card.parent.title)}</span> 
+                                    <span style="color: var(--vscode-editor-foreground);">${formatDep(card.parent)}</span>
                                     <span id="removeParent" data-id="${card.parent.id}" style="cursor: pointer; color: var(--error); margin-left: 4px;">(Unlink)</span>
                                 ` : '<span style="font-style:italic;">None</span>'}
                             </div>
@@ -469,7 +482,7 @@ function openDetail(card) {
                           <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
                             ${(card.blocked_by || []).map(b => `
                                 <li>
-                                    ${escapeHtml(b.title)} 
+                                    ${formatDep(b)}
                                     <span class="remove-blocker" data-id="${b.id}" style="cursor: pointer; color: var(--error); margin-left: 4px;">&times;</span>
                                 </li>
                             `).join('')}
@@ -484,7 +497,7 @@ function openDetail(card) {
                           ${(card.blocks && card.blocks.length > 0) ? `
                             <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
                               ${card.blocks.map(b => `
-                                  <li>${escapeHtml(b.title)}</li>
+                                  <li>${formatDep(b)}</li>
                               `).join('')}
                             </ul>
                           ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
@@ -494,13 +507,50 @@ function openDetail(card) {
                           ${(card.children && card.children.length > 0) ? `
                             <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
                               ${card.children.map(c => `
-                                  <li>${escapeHtml(c.title)}</li>
+                                  <li>${formatDep(c)}</li>
                               `).join('')}
                             </ul>
                           ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
                     </div>
                 </div>
             </div>
+
+            <!-- Event/Agent Metadata Panel (only shown when populated) -->
+            ${(() => {
+                const hasEventData = card.event_kind || card.actor || card.target || card.payload || card.sender ||
+                                     card.mol_type || card.role_type || card.rig || card.agent_state ||
+                                     card.last_activity || card.hook_bead || card.role_bead ||
+                                     card.await_type || card.await_id || card.timeout_ns || card.waiters;
+                if (!hasEventData) return '';
+
+                return `
+                    <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
+                        <details>
+                            <summary style="font-size: 10px; color: var(--muted); text-transform: uppercase; cursor: pointer; user-select: none;">
+                                Advanced Metadata (Event/Agent)
+                            </summary>
+                            <div style="margin-top: 8px; display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; font-size: 11px;">
+                                ${card.event_kind ? `<span style="color: var(--muted);">Event Kind:</span><span>${escapeHtml(card.event_kind)}</span>` : ''}
+                                ${card.actor ? `<span style="color: var(--muted);">Actor:</span><span>${escapeHtml(card.actor)}</span>` : ''}
+                                ${card.target ? `<span style="color: var(--muted);">Target:</span><span>${escapeHtml(card.target)}</span>` : ''}
+                                ${card.sender ? `<span style="color: var(--muted);">Sender:</span><span>${escapeHtml(card.sender)}</span>` : ''}
+                                ${card.mol_type ? `<span style="color: var(--muted);">Mol Type:</span><span>${escapeHtml(card.mol_type)}</span>` : ''}
+                                ${card.role_type ? `<span style="color: var(--muted);">Role Type:</span><span>${escapeHtml(card.role_type)}</span>` : ''}
+                                ${card.rig ? `<span style="color: var(--muted);">Rig:</span><span>${escapeHtml(card.rig)}</span>` : ''}
+                                ${card.agent_state ? `<span style="color: var(--muted);">Agent State:</span><span>${escapeHtml(card.agent_state)}</span>` : ''}
+                                ${card.last_activity ? `<span style="color: var(--muted);">Last Activity:</span><span>${new Date(card.last_activity).toLocaleString()}</span>` : ''}
+                                ${card.hook_bead ? `<span style="color: var(--muted);">Hook Bead:</span><span>${escapeHtml(card.hook_bead)}</span>` : ''}
+                                ${card.role_bead ? `<span style="color: var(--muted);">Role Bead:</span><span>${escapeHtml(card.role_bead)}</span>` : ''}
+                                ${card.await_type ? `<span style="color: var(--muted);">Await Type:</span><span>${escapeHtml(card.await_type)}</span>` : ''}
+                                ${card.await_id ? `<span style="color: var(--muted);">Await ID:</span><span>${escapeHtml(card.await_id)}</span>` : ''}
+                                ${card.timeout_ns !== null && card.timeout_ns !== undefined ? `<span style="color: var(--muted);">Timeout (ns):</span><span>${card.timeout_ns}</span>` : ''}
+                                ${card.waiters ? `<span style="color: var(--muted);">Waiters:</span><span>${escapeHtml(card.waiters)}</span>` : ''}
+                                ${card.payload ? `<span style="color: var(--muted); vertical-align: top;">Payload:</span><pre style="margin: 0; font-size: 10px; overflow-x: auto; max-width: 100%; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 3px;">${escapeHtml(card.payload)}</pre>` : ''}
+                            </div>
+                        </details>
+                    </div>
+                `;
+            })()}
 
             <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
                 <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Comments</label>

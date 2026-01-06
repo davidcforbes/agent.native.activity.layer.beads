@@ -3,7 +3,7 @@ import * as path from "path";
 import initSqlJs, { Database, QueryExecResult } from "sql.js";
 import * as vscode from "vscode";
 import { v4 as uuidv4 } from "uuid";
-import { BoardCard, BoardData, BoardColumn, IssueRow, IssueStatus, Comment } from "./types";
+import { BoardCard, BoardData, BoardColumn, IssueRow, IssueStatus, Comment, DependencyInfo } from "./types";
 
 // Sanitize error messages to prevent leaking implementation details
 function sanitizeError(error: unknown): string {
@@ -165,7 +165,23 @@ export class BeadsAdapter {
           COALESCE(bi.blocked_by_count, 0) AS blocked_by_count,
           i.pinned,
           i.is_template,
-          i.ephemeral
+          i.ephemeral,
+          i.event_kind,
+          i.actor,
+          i.target,
+          i.payload,
+          i.sender,
+          i.mol_type,
+          i.role_type,
+          i.rig,
+          i.agent_state,
+          i.last_activity,
+          i.hook_bead,
+          i.role_bead,
+          i.await_type,
+          i.await_id,
+          i.timeout_ns,
+          i.waiters
         FROM issues i
         LEFT JOIN ready_issues ri ON ri.id = i.id
         LEFT JOIN blocked_issues bi ON bi.id = i.id
@@ -191,10 +207,10 @@ export class BeadsAdapter {
       rel_type: string; // 'parent-child' or 'blocks'
     }
 
-    const parentMap = new Map<string, { id: string; title: string }>();
-    const childrenMap = new Map<string, { id: string; title: string }[]>();
-    const blockedByMap = new Map<string, { id: string; title: string }[]>();
-    const blocksMap = new Map<string, { id: string; title: string }[]>();
+    const parentMap = new Map<string, DependencyInfo>();
+    const childrenMap = new Map<string, DependencyInfo[]>();
+    const blockedByMap = new Map<string, DependencyInfo[]>();
+    const blocksMap = new Map<string, DependencyInfo[]>();
     const commentsByIssue = new Map<string, Comment[]>();
 
     if (ids.length > 0) {
@@ -215,16 +231,41 @@ export class BeadsAdapter {
       // So 'ids' should check all.
       
       const allDeps = this.queryAll(`
-        SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title
+        SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
+               d.created_at, d.created_by, d.metadata, d.thread_id
         FROM dependencies d
         JOIN issues i1 ON i1.id = d.issue_id
         JOIN issues i2 ON i2.id = d.depends_on_id
         WHERE d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders});
-      `, [...ids, ...ids]) as { issue_id: string; depends_on_id: string; type: string; issue_title: string; depends_title: string }[];
+      `, [...ids, ...ids]) as {
+        issue_id: string;
+        depends_on_id: string;
+        type: string;
+        issue_title: string;
+        depends_title: string;
+        created_at: string;
+        created_by: string;
+        metadata: string;
+        thread_id: string;
+      }[];
 
       for (const d of allDeps) {
-        const child = { id: d.issue_id, title: d.issue_title };
-        const parent = { id: d.depends_on_id, title: d.depends_title };
+        const child: DependencyInfo = {
+          id: d.issue_id,
+          title: d.issue_title,
+          created_at: d.created_at,
+          created_by: d.created_by,
+          metadata: d.metadata,
+          thread_id: d.thread_id
+        };
+        const parent: DependencyInfo = {
+          id: d.depends_on_id,
+          title: d.depends_title,
+          created_at: d.created_at,
+          created_by: d.created_by,
+          metadata: d.metadata,
+          thread_id: d.thread_id
+        };
 
         if (d.type === 'parent-child') {
           // issue_id is child, depends_on_id is parent
@@ -281,6 +322,22 @@ export class BeadsAdapter {
       pinned: r.pinned === 1,
       is_template: r.is_template === 1,
       ephemeral: r.ephemeral === 1,
+      event_kind: r.event_kind,
+      actor: r.actor,
+      target: r.target,
+      payload: r.payload,
+      sender: r.sender,
+      mol_type: r.mol_type,
+      role_type: r.role_type,
+      rig: r.rig,
+      agent_state: r.agent_state,
+      last_activity: r.last_activity,
+      hook_bead: r.hook_bead,
+      role_bead: r.role_bead,
+      await_type: r.await_type,
+      await_id: r.await_id,
+      timeout_ns: r.timeout_ns,
+      waiters: r.waiters,
       parent: parentMap.get(r.id),
       children: childrenMap.get(r.id),
       blocked_by: blockedByMap.get(r.id),

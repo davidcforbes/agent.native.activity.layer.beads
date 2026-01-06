@@ -25,6 +25,24 @@ export interface IssueRow {
   pinned: number | null; // 0/1
   is_template: number | null; // 0/1
   ephemeral: number | null; // 0/1
+
+  // Event/Agent metadata
+  event_kind: string | null;
+  actor: string | null;
+  target: string | null;
+  payload: string | null;
+  sender: string | null;
+  mol_type: string | null;
+  role_type: string | null;
+  rig: string | null;
+  agent_state: string | null;
+  last_activity: string | null;
+  hook_bead: string | null;
+  role_bead: string | null;
+  await_type: string | null;
+  await_id: string | null;
+  timeout_ns: number | null;
+  waiters: string | null;
 }
 
 export interface BoardCard {
@@ -50,12 +68,39 @@ export interface BoardCard {
   is_template?: boolean;
   ephemeral?: boolean;
 
+  // Event/Agent metadata
+  event_kind?: string | null;
+  actor?: string | null;
+  target?: string | null;
+  payload?: string | null;
+  sender?: string | null;
+  mol_type?: string | null;
+  role_type?: string | null;
+  rig?: string | null;
+  agent_state?: string | null;
+  last_activity?: string | null;
+  hook_bead?: string | null;
+  role_bead?: string | null;
+  await_type?: string | null;
+  await_id?: string | null;
+  timeout_ns?: number | null;
+  waiters?: string | null;
+
   // Relationships
-  parent?: { id: string; title: string };
-  children?: { id: string; title: string }[];
-  blocks?: { id: string; title: string }[];
-  blocked_by?: { id: string; title: string }[];
+  parent?: DependencyInfo;
+  children?: DependencyInfo[];
+  blocks?: DependencyInfo[];
+  blocked_by?: DependencyInfo[];
   comments?: Comment[];
+}
+
+export interface DependencyInfo {
+  id: string;
+  title: string;
+  created_at?: string;
+  created_by?: string;
+  metadata?: string;
+  thread_id?: string;
 }
 
 export interface Comment {
