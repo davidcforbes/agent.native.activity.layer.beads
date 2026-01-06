@@ -72,6 +72,24 @@ if (typeof marked !== 'undefined') {
 // Request/response tracking for async operations
 const pendingRequests = new Map();
 
+// Cleanup pending requests to prevent memory leaks
+function cleanupPendingRequests() {
+    for (const [reqId, { reject }] of pendingRequests.entries()) {
+        reject(new Error('Request cancelled: webview hidden or disposed'));
+    }
+    pendingRequests.clear();
+}
+
+// Cleanup pending requests when webview becomes hidden or is disposed
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        cleanupPendingRequests();
+    }
+});
+
+// Also cleanup on page unload
+window.addEventListener('pagehide', cleanupPendingRequests);
+
 function requestId() {
     return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
