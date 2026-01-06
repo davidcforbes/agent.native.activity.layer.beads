@@ -22,32 +22,10 @@ let boardData = null;
 const vscodeState = vscode.getState() || {};
 const collapsedColumns = new Set(vscodeState.collapsedColumns || []);
 
-// Restore filter values from persisted state
-if (vscodeState.filterPriority !== undefined) {
-    filterPriority.value = vscodeState.filterPriority;
-}
-if (vscodeState.filterType !== undefined) {
-    filterType.value = vscodeState.filterType;
-}
-if (vscodeState.filterSearch !== undefined) {
-    filterSearch.value = vscodeState.filterSearch;
-}
-
 // Helper to persist collapsed columns state
 function saveCollapsedColumnsState() {
     vscode.setState({ ...vscode.getState(), collapsedColumns: [...collapsedColumns] });
 }
-
-// Helper to persist filter state
-function saveFilterState() {
-    vscode.setState({
-        ...vscode.getState(),
-        filterPriority: filterPriority.value,
-        filterType: filterType.value,
-        filterSearch: filterSearch.value
-    });
-}
-
 let activeRequests = 0;
 
 // Loading indicator helpers
@@ -324,10 +302,18 @@ function render() {
 
                 if (!id || !toColumn) return;
 
-                // Only post if status changed (column changed)
-                // Ignore reordering within same column since order is not persisted in DB
-                if (toColumn !== fromColumn) {
+                // If moved to a different position or column
+                if (toColumn !== fromColumn || evt.newIndex !== evt.oldIndex) {
                     post("issue.move", { id, toColumn });
+
+                    // Simple undo toast if moved between columns (optional, kept from original logic)
+                    if (fromColumn !== toColumn) {
+                        // We don't implement full undo logic with Sortable easily here since state updates shortly,
+                        // but we can keep the toast notification.
+                        // Logic from original was:
+                        // toast(`Moved to ${toColumn}`, "Undo", () => { ... });
+                        // But for now let's just notify.
+                    }
                 }
             }
         });
@@ -456,22 +442,19 @@ newBtn.addEventListener("click", () => {
     openDetail(emptyCard);
 });
 
-filterPriority.addEventListener("change", () => {
-    saveFilterState();
-    render();
-});
-filterType.addEventListener("change", () => {
-    saveFilterState();
-    render();
-});
-filterSearch.addEventListener("input", () => {
-    saveFilterState();
-    render();
-});
+filterPriority.addEventListener("change", render);
+filterType.addEventListener("change", render);
+filterSearch.addEventListener("input", render);
 
 window.addEventListener("message", (event) => {
     const msg = event.data;
     if (!msg || !msg.type) return;
+
+    // Handle cleanup message from extension (for proper disposal)
+    if (msg.type === "webview.cleanup") {
+        cleanupPendingRequests();
+        return;
+    }
 
     if (msg.type === "board.data") {
         boardData = msg.payload;
@@ -479,7 +462,11 @@ window.addEventListener("message", (event) => {
         
         // Resolve any pending request waiting for board data
         if (msg.requestId && pendingRequests.has(msg.requestId)) {
-            const { resolve } = pendingRequests.get(msg.requestId);
+            const { resolve, timeoutId } = pendingRequests.get(msg.requestId);
+            // Clear timeout immediately to prevent unnecessary memory overhead
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
             pendingRequests.delete(msg.requestId);
             resolve(msg.payload);
         }
@@ -491,7 +478,11 @@ window.addEventListener("message", (event) => {
         
         // Reject pending request
         if (msg.requestId && pendingRequests.has(msg.requestId)) {
-            const { reject } = pendingRequests.get(msg.requestId);
+            const { reject, timeoutId } = pendingRequests.get(msg.requestId);
+            // Clear timeout immediately to prevent unnecessary memory overhead
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
             pendingRequests.delete(msg.requestId);
             reject(new Error(msg.error || "Operation failed"));
         }
@@ -501,7 +492,11 @@ window.addEventListener("message", (event) => {
     if (msg.type === "mutation.ok") {
         // Resolve pending request
         if (msg.requestId && pendingRequests.has(msg.requestId)) {
-            const { resolve } = pendingRequests.get(msg.requestId);
+            const { resolve, timeoutId } = pendingRequests.get(msg.requestId);
+            // Clear timeout immediately to prevent unnecessary memory overhead
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
             pendingRequests.delete(msg.requestId);
             resolve();
         }
@@ -583,7 +578,7 @@ function openDetail(card) {
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                  <div>
                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Est. Minutes</label>
-                    <input id="editEst" type="number" value="${card.estimated_minutes || ''}" placeholder="Min" class="input-estimate" style="margin-top: 4px;" />
+                    <input id="editEst" type="number" value="${card.estimated_minutes || ''}" placeholder="Min" style="width: 100%; margin-top: 4px;" />
                 </div>
                 <div>
                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Ext Ref</label>

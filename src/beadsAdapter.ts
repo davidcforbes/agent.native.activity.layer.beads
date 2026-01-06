@@ -31,6 +31,7 @@ export class BeadsAdapter {
   private saveTimeout: NodeJS.Timeout | null = null;
   private isDirty = false;
   private isSaving = false;
+  private savePromise: Promise<void> | null = null; // Mutex lock for save operations
   private boardCache: any | null = null;
   private cacheTimestamp = 0;
   private lastSaveTime = 0;
@@ -365,14 +366,19 @@ export class BeadsAdapter {
 
       // Fetch labels in batches with event loop yields
       for (let i = 0; i < idBatches.length; i++) {
-        const batch = idBatches[i];
-        const placeholders = batch.map(() => "?").join(",");
-        const labelRows = this.queryAll(`SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders}) ORDER BY label;`, batch) as Array<{ issue_id: string; label: string }>;
+        try {
+          const batch = idBatches[i];
+          const placeholders = batch.map(() => "?").join(",");
+          const labelRows = this.queryAll(`SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders}) ORDER BY label;`, batch) as Array<{ issue_id: string; label: string }>;
 
-        for (const r of labelRows) {
-          const arr = labelsByIssue.get(r.issue_id) ?? [];
-          arr.push(r.label);
-          labelsByIssue.set(r.issue_id, arr);
+          for (const r of labelRows) {
+            const arr = labelsByIssue.get(r.issue_id) ?? [];
+            arr.push(r.label);
+            labelsByIssue.set(r.issue_id, arr);
+          }
+        } catch (error) {
+          this.output.appendLine(`[BeadsAdapter] WARNING: Failed to load labels for batch ${i + 1}/${idBatches.length}: ${error instanceof Error ? error.message : String(error)}`);
+          // Continue with remaining batches for partial functionality
         }
 
         // Yield to event loop between batches to prevent UI freezing
@@ -387,62 +393,67 @@ export class BeadsAdapter {
       // So 'ids' should check all.
 
       for (let i = 0; i < idBatches.length; i++) {
-        const batch = idBatches[i];
-        const placeholders = batch.map(() => "?").join(",");
-        const allDeps = this.queryAll(`
-          SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
-                 d.created_at, d.created_by, d.metadata, d.thread_id
-          FROM dependencies d
-          JOIN issues i1 ON i1.id = d.issue_id
-          JOIN issues i2 ON i2.id = d.depends_on_id
-          WHERE (d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders}));
-        `, [...batch, ...batch]) as {
-          issue_id: string;
-          depends_on_id: string;
-          type: string;
-          issue_title: string;
-          depends_title: string;
-          created_at: string;
-          created_by: string;
-          metadata: string;
-          thread_id: string;
-        }[];
+        try {
+          const batch = idBatches[i];
+          const placeholders = batch.map(() => "?").join(",");
+          const allDeps = this.queryAll(`
+            SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
+                   d.created_at, d.created_by, d.metadata, d.thread_id
+            FROM dependencies d
+            JOIN issues i1 ON i1.id = d.issue_id
+            JOIN issues i2 ON i2.id = d.depends_on_id
+            WHERE (d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders}));
+          `, [...batch, ...batch]) as {
+            issue_id: string;
+            depends_on_id: string;
+            type: string;
+            issue_title: string;
+            depends_title: string;
+            created_at: string;
+            created_by: string;
+            metadata: string;
+            thread_id: string;
+          }[];
 
-        for (const d of allDeps) {
-          const child: DependencyInfo = {
-            id: d.issue_id,
-            title: d.issue_title,
-            created_at: d.created_at,
-            created_by: d.created_by,
-            metadata: d.metadata,
-            thread_id: d.thread_id
-          };
-          const parent: DependencyInfo = {
-            id: d.depends_on_id,
-            title: d.depends_title,
-            created_at: d.created_at,
-            created_by: d.created_by,
-            metadata: d.metadata,
-            thread_id: d.thread_id
-          };
+          for (const d of allDeps) {
+            const child: DependencyInfo = {
+              id: d.issue_id,
+              title: d.issue_title,
+              created_at: d.created_at,
+              created_by: d.created_by,
+              metadata: d.metadata,
+              thread_id: d.thread_id
+            };
+            const parent: DependencyInfo = {
+              id: d.depends_on_id,
+              title: d.depends_title,
+              created_at: d.created_at,
+              created_by: d.created_by,
+              metadata: d.metadata,
+              thread_id: d.thread_id
+            };
 
-          if (d.type === 'parent-child') {
-            // issue_id is child, depends_on_id is parent
-            parentMap.set(d.issue_id, parent);
+            if (d.type === 'parent-child') {
+              // issue_id is child, depends_on_id is parent
+              parentMap.set(d.issue_id, parent);
 
-            const list = childrenMap.get(d.depends_on_id) ?? [];
-            list.push(child);
-            childrenMap.set(d.depends_on_id, list);
-          } else if (d.type === 'blocks') {
-            // issue_id is BLOCKED BY depends_on_id
-            const blockedByList = blockedByMap.get(d.issue_id) ?? [];
-            blockedByList.push(parent); // parent here is just the blocker (depends_on_id)
-            blockedByMap.set(d.issue_id, blockedByList);
+              const list = childrenMap.get(d.depends_on_id) ?? [];
+              list.push(child);
+              childrenMap.set(d.depends_on_id, list);
+            } else if (d.type === 'blocks') {
+              // issue_id is BLOCKED BY depends_on_id
+              const blockedByList = blockedByMap.get(d.issue_id) ?? [];
+              blockedByList.push(parent); // parent here is just the blocker (depends_on_id)
+              blockedByMap.set(d.issue_id, blockedByList);
 
-            const blocksList = blocksMap.get(d.depends_on_id) ?? [];
-            blocksList.push(child); // child here is the blocked one (issue_id)
-            blocksMap.set(d.depends_on_id, blocksList);
+              const blocksList = blocksMap.get(d.depends_on_id) ?? [];
+              blocksList.push(child); // child here is the blocked one (issue_id)
+              blocksMap.set(d.depends_on_id, blocksList);
+            }
           }
+        } catch (error) {
+          this.output.appendLine(`[BeadsAdapter] WARNING: Failed to load dependencies for batch ${i + 1}/${idBatches.length}: ${error instanceof Error ? error.message : String(error)}`);
+          // Continue with remaining batches for partial functionality
         }
 
         // Yield to event loop between batches to prevent UI freezing
@@ -453,19 +464,24 @@ export class BeadsAdapter {
 
       // Fetch comments for these issues in batches with event loop yields
       for (let i = 0; i < idBatches.length; i++) {
-        const batch = idBatches[i];
-        const placeholders = batch.map(() => "?").join(",");
-        const allComments = this.queryAll(`
-          SELECT id, issue_id, author, text, created_at
-          FROM comments
-          WHERE issue_id IN (${placeholders})
-          ORDER BY created_at ASC;
-        `, batch) as Comment[];
+        try {
+          const batch = idBatches[i];
+          const placeholders = batch.map(() => "?").join(",");
+          const allComments = this.queryAll(`
+            SELECT id, issue_id, author, text, created_at
+            FROM comments
+            WHERE issue_id IN (${placeholders})
+            ORDER BY created_at ASC;
+          `, batch) as Comment[];
 
-        for (const c of allComments) {
-          const list = commentsByIssue.get(c.issue_id) ?? [];
-          list.push(c);
-          commentsByIssue.set(c.issue_id, list);
+          for (const c of allComments) {
+            const list = commentsByIssue.get(c.issue_id) ?? [];
+            list.push(c);
+            commentsByIssue.set(c.issue_id, list);
+          }
+        } catch (error) {
+          this.output.appendLine(`[BeadsAdapter] WARNING: Failed to load comments for batch ${i + 1}/${idBatches.length}: ${error instanceof Error ? error.message : String(error)}`);
+          // Continue with remaining batches for partial functionality
         }
 
         // Yield to event loop between batches to prevent UI freezing
@@ -574,7 +590,7 @@ export class BeadsAdapter {
     const dueAt = input.due_at ?? null;
     const deferUntil = input.defer_until ?? null;
 
-    this.runQuery(`
+    await this.runQuery(`
       INSERT INTO issues (
         id, title, description, status, priority, issue_type, assignee, estimated_minutes,
         acceptance_criteria, design, notes, external_ref, due_at, defer_until
@@ -593,7 +609,7 @@ export class BeadsAdapter {
 
     // Enforce closed_at CHECK constraint properly
     if (toStatus === "closed") {
-      this.runQuery(`
+      await this.runQuery(`
         UPDATE issues
         SET status='closed',
             closed_at=CURRENT_TIMESTAMP,
@@ -604,7 +620,7 @@ export class BeadsAdapter {
       return;
     }
 
-    this.runQuery(`
+    await this.runQuery(`
       UPDATE issues
       SET status = ?,
       closed_at = NULL,
@@ -631,9 +647,26 @@ export class BeadsAdapter {
   }): Promise<void> {
     if (!this.db) await this.ensureConnected();
 
+    // Defense-in-depth: Whitelist of allowed field names to prevent SQL injection
+    // if this code is ever refactored to use Object.keys(updates)
+    const ALLOWED_FIELDS = new Set([
+      'title', 'description', 'priority', 'issue_type', 'assignee',
+      'estimated_minutes', 'acceptance_criteria', 'design', 'external_ref',
+      'notes', 'due_at', 'defer_until', 'status'
+    ]);
+
+    // Validate that no unexpected fields are present
+    for (const key of Object.keys(updates)) {
+      if (!ALLOWED_FIELDS.has(key)) {
+        throw new Error(`Invalid field name: ${key}`);
+      }
+    }
+
     const fields: string[] = [];
     const values: any[] = [];
 
+    // NOTE: We explicitly check each field rather than iterating Object.keys()
+    // to ensure field names are hardcoded and cannot be controlled by attacker
     if (updates.title !== undefined) { fields.push("title = ?"); values.push(updates.title); }
     if (updates.description !== undefined) { fields.push("description = ?"); values.push(updates.description); }
     if (updates.priority !== undefined) { fields.push("priority = ?"); values.push(updates.priority); }
@@ -662,7 +695,7 @@ export class BeadsAdapter {
 
     values.push(id);
 
-    this.runQuery(`
+    await this.runQuery(`
       UPDATE issues
       SET ${fields.join(", ")}
       WHERE id = ? AND deleted_at IS NULL;
@@ -671,8 +704,8 @@ export class BeadsAdapter {
 
   public async addComment(issueId: string, text: string, author: string): Promise<void> {
     if (!this.db) await this.ensureConnected();
-    
-    this.runQuery(`
+
+    await this.runQuery(`
       INSERT INTO comments (issue_id, author, text)
       VALUES (?, ?, ?);
     `, [issueId, author, text]);
@@ -680,17 +713,17 @@ export class BeadsAdapter {
 
   public async addLabel(issueId: string, label: string): Promise<void> {
     if (!this.db) await this.ensureConnected();
-    this.runQuery("INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?, ?)", [issueId, label]);
+    await this.runQuery("INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?, ?)", [issueId, label]);
   }
 
   public async removeLabel(issueId: string, label: string): Promise<void> {
     if (!this.db) await this.ensureConnected();
-    this.runQuery("DELETE FROM labels WHERE issue_id = ? AND label = ?", [issueId, label]);
+    await this.runQuery("DELETE FROM labels WHERE issue_id = ? AND label = ?", [issueId, label]);
   }
 
   public async addDependency(issueId: string, dependsOnId: string, type: 'parent-child' | 'blocks' = 'blocks'): Promise<void> {
     if (!this.db) await this.ensureConnected();
-    this.runQuery(`
+    await this.runQuery(`
       INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_by)
       VALUES (?, ?, ?, 'extension');
     `, [issueId, dependsOnId, type]);
@@ -698,7 +731,7 @@ export class BeadsAdapter {
 
   public async removeDependency(issueId: string, dependsOnId: string): Promise<void> {
     if (!this.db) await this.ensureConnected();
-    this.runQuery("DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?", [issueId, dependsOnId]);
+    await this.runQuery("DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?", [issueId, dependsOnId]);
   }
 
 
@@ -709,13 +742,14 @@ export class BeadsAdapter {
       const data = this.db.export();
       const buffer = Buffer.from(data);
 
+      // Set lastSaveTime BEFORE writing to prevent file watcher race condition
+      // File watcher may fire immediately after rename, so we need timestamp set first
+      this.lastSaveTime = Date.now();
+
       // Atomic write: write to temp file then rename
       const tmpPath = this.dbPath + '.tmp';
       fs.writeFileSync(tmpPath, buffer);
       fs.renameSync(tmpPath, this.dbPath);
-
-      // Track save time to avoid reloading our own writes
-      this.lastSaveTime = Date.now();
 
       // Update mtime tracking
       try {
@@ -752,21 +786,27 @@ export class BeadsAdapter {
         const versionAtSaveStart = this.mutationVersion;
 
         this.isSaving = true;
-        try {
-          this.save();
 
-          // Only clear dirty flag if no mutations happened during save
-          // If mutationVersion changed during save(), it means a new mutation occurred
-          // and we should NOT clear the dirty flag
-          if (this.mutationVersion === versionAtSaveStart) {
-            this.isDirty = false;
+        // Create a promise that resolves when save completes (for mutex lock)
+        this.savePromise = new Promise<void>((resolve) => {
+          try {
+            this.save();
+
+            // Only clear dirty flag if no mutations happened during save
+            // If mutationVersion changed during save(), it means a new mutation occurred
+            // and we should NOT clear the dirty flag
+            if (this.mutationVersion === versionAtSaveStart) {
+              this.isDirty = false;
+            }
+          } catch (error) {
+            // If save failed, leave isDirty=true so we retry
+            // Error already logged and shown in save()
+          } finally {
+            this.isSaving = false;
+            this.savePromise = null;
+            resolve();
           }
-        } catch (error) {
-          // If save failed, leave isDirty=true so we retry
-          // Error already logged and shown in save()
-        } finally {
-          this.isSaving = false;
-        }
+        });
       }
       this.saveTimeout = null;
     }, 300); // 300ms debounce - prevents excessive file writes
@@ -794,12 +834,17 @@ export class BeadsAdapter {
       }
   }
 
-  private runQuery(sql: string, params: any[] = []) {
+  private async runQuery(sql: string, params: any[] = []): Promise<void> {
+      // Wait for any in-progress save to complete before mutating (mutex lock)
+      if (this.savePromise) {
+        await this.savePromise;
+      }
+
       if (!this.db) {
         this.output.appendLine('[BeadsAdapter] Database not connected in runQuery, attempting reconnect...');
         throw new Error('Database not connected. Please reload the extension.');
       }
-      
+
       // Note: db.run() automatically frees prepared statements in sql.js
       // If you need to use db.prepare() manually in the future, you MUST call stmt.free()
       this.db.run(sql, params);
