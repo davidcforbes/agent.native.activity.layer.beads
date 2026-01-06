@@ -45,10 +45,10 @@ export class BeadsAdapter {
       this.saveTimeout = null;
     }
 
-    // Flush any pending changes before disposing (use sync version for disposal)
+    // Flush any pending changes before disposing
     if (this.isDirty && this.db && this.dbPath) {
       try {
-        this.saveSync();
+        this.save();
         this.isDirty = false;
       } catch (error) {
         this.output.appendLine(`[BeadsAdapter] Failed to flush changes on dispose: ${error}`);
@@ -62,11 +62,6 @@ export class BeadsAdapter {
     }
     this.db = null;
     this.dbPath = null;
-
-    // Clear cache on disposal
-    this.boardCache = null;
-    this.cacheTimestamp = 0;
-    this.lastSaveTime = 0;
   }
 
   public async ensureConnected(): Promise<void> {
@@ -482,7 +477,15 @@ export class BeadsAdapter {
     if (updates.notes !== undefined) { fields.push("notes = ?"); values.push(updates.notes); }
     if (updates.due_at !== undefined) { fields.push("due_at = ?"); values.push(updates.due_at); }
     if (updates.defer_until !== undefined) { fields.push("defer_until = ?"); values.push(updates.defer_until); }
-    if (updates.status !== undefined) { fields.push("status = ?"); values.push(updates.status); }
+    if (updates.status !== undefined) {
+      // Validate status against allowed values
+      const validStatuses = ['open', 'in_progress', 'blocked', 'closed'];
+      if (!validStatuses.includes(updates.status)) {
+        throw new Error(`Invalid status: ${updates.status}. Must be one of: ${validStatuses.join(', ')}`);
+      }
+      fields.push("status = ?");
+      values.push(updates.status);
+    }
 
     if (fields.length === 0) return;
 
@@ -530,39 +533,7 @@ export class BeadsAdapter {
   }
 
 
-  private async save(): Promise<void> {
-    if (!this.db || !this.dbPath) return;
-
-    try {
-      const data = this.db.export();
-      const buffer = Buffer.from(data);
-
-      // Atomic write: write to temp file then rename (now async to prevent blocking)
-      const tmpPath = this.dbPath + '.tmp';
-      await fsPromises.writeFile(tmpPath, buffer);
-      await fsPromises.rename(tmpPath, this.dbPath);
-
-      // Track successful save timestamp to prevent file watcher loops
-      this.lastSaveTime = Date.now();
-
-      this.output.appendLine('[BeadsAdapter] Database saved successfully');
-    } catch (error) {
-      const msg = `Failed to save database: ${error instanceof Error ? error.message : String(error)}`;
-      this.output.appendLine(`[BeadsAdapter] ERROR: ${msg}`);
-
-      // Show user-visible error (sanitized)
-      vscode.window.showErrorMessage(`Beads Kanban: ${sanitizeError(error)}`);
-
-      // Re-throw to prevent silent data loss
-      throw new Error(msg);
-    }
-  }
-
-  /**
-   * Synchronous save for use during disposal only
-   * Regular saves should use async save() to avoid blocking
-   */
-  private saveSync(): void {
+  private save(): void {
     if (!this.db || !this.dbPath) return;
 
     try {
@@ -574,10 +545,7 @@ export class BeadsAdapter {
       fs.writeFileSync(tmpPath, buffer);
       fs.renameSync(tmpPath, this.dbPath);
 
-      // Track successful save timestamp
-      this.lastSaveTime = Date.now();
-
-      this.output.appendLine('[BeadsAdapter] Database saved synchronously');
+      this.output.appendLine('[BeadsAdapter] Database saved successfully');
     } catch (error) {
       const msg = `Failed to save database: ${error instanceof Error ? error.message : String(error)}`;
       this.output.appendLine(`[BeadsAdapter] ERROR: ${msg}`);
@@ -596,17 +564,17 @@ export class BeadsAdapter {
       clearTimeout(this.saveTimeout);
     }
 
-    // Schedule a new save after 300ms
-    this.saveTimeout = setTimeout(async () => {
+    // Schedule a new save after 100ms
+    this.saveTimeout = setTimeout(() => {
       // Prevent concurrent saves
       if (this.isDirty && !this.isSaving) {
+        this.isDirty = false;  // Clear dirty flag before saving
         this.isSaving = true;
         try {
-          await this.save();
-          // Only clear isDirty AFTER successful save to prevent data loss
-          this.isDirty = false;
+          this.save();
         } catch (error) {
-          // If save failed, keep isDirty = true so we retry
+          // If save failed, mark as dirty again
+          this.isDirty = true;
           // Error already logged and shown in save()
         } finally {
           this.isSaving = false;
