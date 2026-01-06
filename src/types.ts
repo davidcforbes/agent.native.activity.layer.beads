@@ -19,6 +19,8 @@ export interface IssueRow {
   external_ref: string | null;
   acceptance_criteria: string;
   design: string;
+  due_at: string | null;
+  defer_until: string | null;
 
   is_ready: number; // 0/1
   blocked_by_count: number; // integer
@@ -60,6 +62,8 @@ export interface BoardCard {
   external_ref?: string | null;
   acceptance_criteria: string;
   design: string;
+  due_at?: string | null;
+  defer_until?: string | null;
 
   is_ready: boolean;
   blocked_by_count: number;
@@ -133,7 +137,9 @@ export const IssueUpdateSchema = z.object({
     estimated_minutes: z.number().int().min(0).nullable().optional(),
     acceptance_criteria: z.string().max(10000).optional(),
     design: z.string().max(10000).optional(),
-    external_ref: z.string().max(200).optional()
+    external_ref: z.string().max(200).optional(),
+    due_at: z.string().nullable().optional(),
+    defer_until: z.string().nullable().optional()
   })
 });
 

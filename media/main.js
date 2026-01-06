@@ -265,6 +265,21 @@ function render() {
             if (card.is_template) badges.push({ text: '📄 Template', cls: 'badge-flag' });
             if (card.ephemeral) badges.push({ text: '⏱ Ephemeral', cls: 'badge-flag' });
 
+            // Scheduling badges
+            if (card.due_at) {
+                const dueDate = new Date(card.due_at);
+                const now = new Date();
+                const isOverdue = dueDate < now;
+                badges.push({
+                    text: `📅 Due: ${dueDate.toLocaleDateString()}`,
+                    cls: isOverdue ? 'badge-overdue' : 'badge-due'
+                });
+            }
+            if (card.defer_until) {
+                const deferDate = new Date(card.defer_until);
+                badges.push({ text: `⏰ Defer: ${deferDate.toLocaleDateString()}`, cls: 'badge-defer' });
+            }
+
             // Parent info
             let parentHtml = "";
             if (card.parent) {
@@ -418,6 +433,17 @@ function openDetail(card) {
                 <div>
                     <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Ext Ref</label>
                     <input id="editExtRef" type="text" value="${safe(card.external_ref)}" placeholder="JIRA-123" style="width: 100%; margin-top: 4px;" />
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+                 <div>
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Due At</label>
+                    <input id="editDueAt" type="datetime-local" value="${card.due_at ? new Date(card.due_at).toISOString().slice(0, 16) : ''}" style="width: 100%; margin-top: 4px;" />
+                </div>
+                <div>
+                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Defer Until</label>
+                    <input id="editDeferUntil" type="datetime-local" value="${card.defer_until ? new Date(card.defer_until).toISOString().slice(0, 16) : ''}" style="width: 100%; margin-top: 4px;" />
                 </div>
             </div>
 
@@ -605,6 +631,8 @@ function openDetail(card) {
             assignee: document.getElementById("editAssignee").value.trim() || null,
             estimated_minutes: document.getElementById("editEst").value ? parseInt(document.getElementById("editEst").value) : null,
             external_ref: document.getElementById("editExtRef").value.trim() || null,
+            due_at: document.getElementById("editDueAt").value ? new Date(document.getElementById("editDueAt").value).toISOString() : null,
+            defer_until: document.getElementById("editDeferUntil").value ? new Date(document.getElementById("editDeferUntil").value).toISOString() : null,
             description: document.getElementById("editDesc").value,
             acceptance_criteria: document.getElementById("editAC").value,
             design: document.getElementById("editDesign").value
