@@ -158,11 +158,20 @@ export class DaemonBeadsAdapter {
       }
 
       // Step 2: Get full details for all issues (includes dependents/relationships)
+      // Batch the requests to avoid command-line length overflow on Windows (~8191 chars)
       const issueIds = basicIssues.map((issue: any) => issue.id);
-      const detailedIssues = await this.execBd(['show', '--json', ...issueIds]);
-      
-      if (!Array.isArray(detailedIssues)) {
-        throw new Error('Expected array from bd show --json <ids>');
+      const BATCH_SIZE = 50; // Conservative batch size to stay well under CLI limits
+      const detailedIssues: any[] = [];
+
+      for (let i = 0; i < issueIds.length; i += BATCH_SIZE) {
+        const batch = issueIds.slice(i, i + BATCH_SIZE);
+        const batchResults = await this.execBd(['show', '--json', ...batch]);
+
+        if (!Array.isArray(batchResults)) {
+          throw new Error('Expected array from bd show --json <ids>');
+        }
+
+        detailedIssues.push(...batchResults);
       }
 
       const boardData = this.mapIssuesToBoardData(detailedIssues);

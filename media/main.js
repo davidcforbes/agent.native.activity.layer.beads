@@ -56,6 +56,14 @@ const purifyConfig = {
     ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };
 
+// HTML escape function to prevent XSS in dynamic content
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 // Configure marked to use GFM breaks
 if (typeof marked !== 'undefined') {
     marked.use({
@@ -114,6 +122,7 @@ function postAsync(type, payload) {
         // Always call hideLoading exactly once per showLoading
         hideLoading();
     });
+}
 
 function post(type, payload) {
     vscode.postMessage({ type, requestId: requestId(), payload });
@@ -644,7 +653,7 @@ function openDetail(card) {
                             <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Parent:
                                 ${card.parent ? `
                                     <span style="color: var(--vscode-editor-foreground);">${formatDep(card.parent)}</span>
-                                    <span id="removeParent" data-id="${card.parent.id}" style="cursor: pointer; color: var(--error); margin-left: 4px;">(Unlink)</span>
+                                    <span id="removeParent" data-id="${escapeHtml(card.parent.id)}" style="cursor: pointer; color: var(--error); margin-left: 4px;">(Unlink)</span>
                                 ` : '<span style="font-style:italic;">None</span>'}
                             </div>
                             ${!card.parent ? `
@@ -661,7 +670,7 @@ function openDetail(card) {
                             ${(card.blocked_by || []).map(b => `
                                 <li>
                                     ${formatDep(b)}
-                                    <span class="remove-blocker" data-id="${b.id}" style="cursor: pointer; color: var(--error); margin-left: 4px;">&times;</span>
+                                    <span class="remove-blocker" data-id="${escapeHtml(b.id)}" style="cursor: pointer; color: var(--error); margin-left: 4px;">&times;</span>
                                 </li>
                             `).join('')}
                           </ul>
@@ -764,7 +773,7 @@ ${!isCreateMode ? `
             
             ${!isCreateMode ? `
             <div style="font-size: 10px; color: var(--muted); text-align: right; margin-top: 8px; line-height: 1.5;">
-               ID: ${card.id}<br>
+               ID: ${escapeHtml(card.id)}<br>
                Created: ${new Date(card.created_at).toLocaleString()}<br>
                Updated: ${new Date(card.updated_at).toLocaleString()}${card.closed_at ? `<br>Closed: ${new Date(card.closed_at).toLocaleString()}` : ''}
             </div>` : ''}

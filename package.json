@@ -50,7 +50,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p . && npm run copy-deps",
-    "copy-deps": "cp node_modules/sql.js/dist/sql-wasm.wasm out/ && cp node_modules/dompurify/dist/purify.min.js media/",
+    "copy-deps": "node scripts/copy-deps.js",
     "watch": "tsc -watch -p .",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",

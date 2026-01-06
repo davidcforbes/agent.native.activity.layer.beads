@@ -71,27 +71,34 @@ export class BeadsAdapter {
     }
 
     const beadsDir = path.join(ws.uri.fsPath, ".beads");
-    if (!fs.existsSync(beadsDir) || !fs.statSync(beadsDir).isDirectory()) {
+    try {
+      const stats = await fsPromises.stat(beadsDir);
+      if (!stats.isDirectory()) {
+        throw new Error("No .beads directory found in the workspace root.");
+      }
+    } catch {
       throw new Error("No .beads directory found in the workspace root.");
     }
 
-    const candidatePaths = fs
-      .readdirSync(beadsDir)
-      .filter((f) => /\.(db|sqlite|sqlite3)$/i.test(f))
-      .map((f) => path.join(beadsDir, f))
-      .filter((p) => {
-        try {
-          const stats = fs.lstatSync(p);
-          if (stats.isSymbolicLink()) {
-            this.output.appendLine(`[BeadsAdapter] Skipping symlink: ${p}`);
-            return false;
-          }
-          return true;
-        } catch (e) {
-          this.output.appendLine(`[BeadsAdapter] Error checking ${p}: ${e}`);
-          return false;
+    // Read directory and filter for database files (async)
+    const allFiles = await fsPromises.readdir(beadsDir);
+    const dbFiles = allFiles.filter((f) => /\.(db|sqlite|sqlite3)$/i.test(f));
+
+    // Filter out symlinks (async)
+    const candidatePaths: string[] = [];
+    for (const f of dbFiles) {
+      const p = path.join(beadsDir, f);
+      try {
+        const stats = await fsPromises.lstat(p);
+        if (stats.isSymbolicLink()) {
+          this.output.appendLine(`[BeadsAdapter] Skipping symlink: ${p}`);
+          continue;
         }
-      });
+        candidatePaths.push(p);
+      } catch (e) {
+        this.output.appendLine(`[BeadsAdapter] Error checking ${p}: ${e}`);
+      }
+    }
 
     if (candidatePaths.length === 0) {
       throw new Error("No SQLite database file found in .beads (expected *.db/*.sqlite/*.sqlite3).");
@@ -107,26 +114,26 @@ export class BeadsAdapter {
     // Find the DB that contains the `issues` table.
     for (const p of candidatePaths) {
       try {
-        const filebuffer = fs.readFileSync(p);
+        const filebuffer = await fsPromises.readFile(p);
         const db = new SQL.Database(filebuffer);
-        
+
         // Check for issues table
         const res = db.exec("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='issues' LIMIT 1;");
-        
+
         if (res.length > 0 && res[0].values.length > 0 && res[0].values[0][0] === 1) {
           const msg = `[BeadsAdapter] Connected to DB: ${p}`;
           this.output.appendLine(msg);
           this.db = db;
           this.dbPath = p;
-          
+
           // Track file modification time to detect external changes
           try {
-            const stats = fs.statSync(p);
+            const stats = await fsPromises.stat(p);
             this.lastKnownMtime = stats.mtimeMs;
           } catch (e) {
             this.output.appendLine(`[BeadsAdapter] Warning: Could not read file stats: ${e}`);
           }
-          
+
           return;
         }
 
@@ -175,7 +182,7 @@ export class BeadsAdapter {
         locateFile: (file) => path.join(__dirname, file)
       });
 
-      const filebuffer = fs.readFileSync(this.dbPath);
+      const filebuffer = await fsPromises.readFile(this.dbPath);
       const db = new SQL.Database(filebuffer);
 
       // Verify issues table still exists
@@ -187,6 +194,15 @@ export class BeadsAdapter {
       }
 
       this.db = db;
+
+      // Clear cache to force fresh data on next getBoard()
+      this.boardCache = null;
+      this.cacheTimestamp = 0;
+
+      // Update mtime tracking to prevent unnecessary reloads
+      const stats = await fsPromises.stat(this.dbPath);
+      this.lastKnownMtime = stats.mtimeMs;
+
       this.output.appendLine('[BeadsAdapter] Database reloaded successfully');
     } catch (error) {
       this.output.appendLine(`[BeadsAdapter] Failed to reload database: ${error instanceof Error ? error.message : String(error)}`);
@@ -261,11 +277,11 @@ export class BeadsAdapter {
       });
 
       // Read file from disk
-      const filebuffer = fs.readFileSync(this.dbPath);
+      const filebuffer = await fsPromises.readFile(this.dbPath);
       this.db = new SQL.Database(filebuffer);
 
       // Update mtime tracking
-      const stats = fs.statSync(this.dbPath);
+      const stats = await fsPromises.stat(this.dbPath);
       this.lastKnownMtime = stats.mtimeMs;
 
       this.output.appendLine(`[BeadsAdapter] Reloaded database from disk: ${this.dbPath}`);
@@ -644,6 +660,13 @@ export class BeadsAdapter {
       }
       fields.push("status = ?");
       values.push(updates.status);
+
+      // Set or clear closed_at based on status
+      if (updates.status === 'closed') {
+        fields.push("closed_at = CURRENT_TIMESTAMP");
+      } else {
+        fields.push("closed_at = NULL");
+      }
     }
 
     if (fields.length === 0) return;
