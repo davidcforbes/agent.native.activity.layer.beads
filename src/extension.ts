@@ -37,8 +37,8 @@ const MAX_CHAT_TEXT = 50_000; // 50KB reasonable for chat
 const MAX_CLIPBOARD_TEXT = 100_000; // 100KB for clipboard
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('[BeadsAdapter] Environment Versions:', JSON.stringify(process.versions, null, 2));
   const output = vscode.window.createOutputChannel("Beads Kanban");
+  output.appendLine('[BeadsAdapter] Environment Versions: ' + JSON.stringify(process.versions, null, 2));
   const adapter = new BeadsAdapter(output);
 
   context.subscriptions.push(output);
@@ -243,14 +243,26 @@ export function activate(context: vscode.ExtensionContext) {
       const watcher = vscode.workspace.createFileSystemWatcher(
         new vscode.RelativePattern(ws, ".beads/**/*.{db,sqlite,sqlite3}")
       );
+      let refreshTimeout: NodeJS.Timeout | null = null;
       const refresh = () => {
-        const requestId = `fs-${Date.now()}`;
-        sendBoard(requestId);
+        if (refreshTimeout) {
+          clearTimeout(refreshTimeout);
+        }
+        refreshTimeout = setTimeout(() => {
+          const requestId = `fs-${Date.now()}`;
+          sendBoard(requestId);
+          refreshTimeout = null;
+        }, 300);
       };
       watcher.onDidChange(refresh);
       watcher.onDidCreate(refresh);
       watcher.onDidDelete(refresh);
-      panel.onDidDispose(() => watcher.dispose());
+      panel.onDidDispose(() => {
+        if (refreshTimeout) {
+          clearTimeout(refreshTimeout);
+        }
+        watcher.dispose();
+      });
     }
 
     // initial load

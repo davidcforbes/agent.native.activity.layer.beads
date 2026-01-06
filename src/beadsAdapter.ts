@@ -78,7 +78,6 @@ export class BeadsAdapter {
         if (res.length > 0 && res[0].values.length > 0 && res[0].values[0][0] === 1) {
           const msg = `[BeadsAdapter] Connected to DB: ${p}`;
           this.output.appendLine(msg);
-          console.log(msg);
           this.db = db;
           this.dbPath = p;
           return;
@@ -87,22 +86,20 @@ export class BeadsAdapter {
         const tablesRes = db.exec("SELECT name FROM sqlite_master WHERE type='table';");
         const tableNames = tablesRes.length > 0 ? tablesRes[0].values.map(v => v[0]).join(', ') : '';
         const reason = `File opened but 'issues' table missing. Tables found: [${tableNames}]`;
-        
+
         this.output.appendLine(`[BeadsAdapter] ${p}: ${reason}`);
-        console.warn(`[BeadsAdapter] ${p}: ${reason}`);
         failureReasons.push(`${path.basename(p)}: ${reason}`);
         
         db.close();
       } catch (e) {
         const msg = String(e instanceof Error ? e.message : e);
         this.output.appendLine(`[BeadsAdapter] Candidate DB failed: ${p} (${msg})`);
-        console.error(`[BeadsAdapter] Candidate DB failed: ${p} (${msg})`);
         failureReasons.push(`${path.basename(p)}: ${msg}`);
       }
     }
 
     const fullError = `Could not find a valid Beads DB in .beads. Searched: ${candidatePaths.map(x => path.basename(x)).join(', ')}. Details:\n${failureReasons.join('\n')}`;
-    console.error(fullError);
+    this.output.appendLine(`[BeadsAdapter] ERROR: ${fullError}`);
     throw new Error(fullError);
   }
 
@@ -112,7 +109,8 @@ export class BeadsAdapter {
 
   public async getBoard(): Promise<BoardData> {
     if (!this.db) await this.ensureConnected();
-    const db = this.db!;
+    if (!this.db) throw new Error('Failed to connect to database');
+    const db = this.db;
 
     // 1) Load issues + derived readiness and blockedness via views
     const issues = this.queryAll(`
@@ -272,7 +270,8 @@ export class BeadsAdapter {
     estimated_minutes?: number | null;
   }): Promise<{ id: string }> {
     if (!this.db) await this.ensureConnected();
-    const db = this.db!;
+    if (!this.db) throw new Error('Failed to connect to database');
+    const db = this.db;
 
     const id = uuidv4();
     const title = (input.title ?? "").trim();
@@ -295,7 +294,8 @@ export class BeadsAdapter {
 
   public async setIssueStatus(id: string, toStatus: IssueStatus): Promise<void> {
     if (!this.db) await this.ensureConnected();
-    const db = this.db!;
+    if (!this.db) throw new Error('Failed to connect to database');
+    const db = this.db;
 
     // Enforce closed_at CHECK constraint properly
     if (toStatus === "closed") {
@@ -408,7 +408,6 @@ export class BeadsAdapter {
     } catch (error) {
       const msg = `Failed to save database: ${error instanceof Error ? error.message : String(error)}`;
       this.output.appendLine(`[BeadsAdapter] ERROR: ${msg}`);
-      console.error('[BeadsAdapter]', error);
 
       // Show user-visible error
       vscode.window.showErrorMessage(`Beads Kanban: ${msg}`);
