@@ -22,10 +22,32 @@ let boardData = null;
 const vscodeState = vscode.getState() || {};
 const collapsedColumns = new Set(vscodeState.collapsedColumns || []);
 
+// Restore filter values from persisted state
+if (vscodeState.filterPriority !== undefined) {
+    filterPriority.value = vscodeState.filterPriority;
+}
+if (vscodeState.filterType !== undefined) {
+    filterType.value = vscodeState.filterType;
+}
+if (vscodeState.filterSearch !== undefined) {
+    filterSearch.value = vscodeState.filterSearch;
+}
+
 // Helper to persist collapsed columns state
 function saveCollapsedColumnsState() {
     vscode.setState({ ...vscode.getState(), collapsedColumns: [...collapsedColumns] });
 }
+
+// Helper to persist filter state
+function saveFilterState() {
+    vscode.setState({
+        ...vscode.getState(),
+        filterPriority: filterPriority.value,
+        filterType: filterType.value,
+        filterSearch: filterSearch.value
+    });
+}
+
 let activeRequests = 0;
 
 // Loading indicator helpers
@@ -434,9 +456,18 @@ newBtn.addEventListener("click", () => {
     openDetail(emptyCard);
 });
 
-filterPriority.addEventListener("change", render);
-filterType.addEventListener("change", render);
-filterSearch.addEventListener("input", render);
+filterPriority.addEventListener("change", () => {
+    saveFilterState();
+    render();
+});
+filterType.addEventListener("change", () => {
+    saveFilterState();
+    render();
+});
+filterSearch.addEventListener("input", () => {
+    saveFilterState();
+    render();
+});
 
 window.addEventListener("message", (event) => {
     const msg = event.data;
