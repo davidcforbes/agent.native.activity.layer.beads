@@ -8,10 +8,28 @@ import { BoardCard, BoardData, BoardColumn, IssueRow, IssueStatus, Comment } fro
 export class BeadsAdapter {
   private db: Database | null = null;
   private dbPath: string | null = null;
+  private saveTimeout: NodeJS.Timeout | null = null;
+  private isDirty = false;
 
   constructor(private readonly output: vscode.OutputChannel) {}
 
   public dispose() {
+    // Clear any pending save timeout
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
+
+    // Flush any pending changes before disposing
+    if (this.isDirty && this.db && this.dbPath) {
+      try {
+        this.save();
+        this.isDirty = false;
+      } catch (error) {
+        this.output.appendLine(`[BeadsAdapter] Failed to flush changes on dispose: ${error}`);
+      }
+    }
+
     try {
       this.db?.close();
     } catch {
@@ -374,12 +392,50 @@ export class BeadsAdapter {
   }
 
 
-  private save() {
-    if (this.db && this.dbPath) {
-        const data = this.db.export();
-        const buffer = Buffer.from(data);
-        fs.writeFileSync(this.dbPath, buffer);
+  private save(): void {
+    if (!this.db || !this.dbPath) return;
+
+    try {
+      const data = this.db.export();
+      const buffer = Buffer.from(data);
+
+      // Atomic write: write to temp file then rename
+      const tmpPath = this.dbPath + '.tmp';
+      fs.writeFileSync(tmpPath, buffer);
+      fs.renameSync(tmpPath, this.dbPath);
+
+      this.output.appendLine('[BeadsAdapter] Database saved successfully');
+    } catch (error) {
+      const msg = `Failed to save database: ${error instanceof Error ? error.message : String(error)}`;
+      this.output.appendLine(`[BeadsAdapter] ERROR: ${msg}`);
+      console.error('[BeadsAdapter]', error);
+
+      // Show user-visible error
+      vscode.window.showErrorMessage(`Beads Kanban: ${msg}`);
+
+      // Re-throw to prevent silent data loss
+      throw new Error(msg);
     }
+  }
+
+  private scheduleSave(): void {
+    // Clear any existing timeout
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+
+    // Schedule a new save after 100ms
+    this.saveTimeout = setTimeout(() => {
+      if (this.isDirty) {
+        try {
+          this.save();
+          this.isDirty = false;
+        } catch (error) {
+          // Error already logged and shown in save()
+        }
+      }
+      this.saveTimeout = null;
+    }, 100); // 100ms debounce
   }
 
   private queryAll(sql: string, params: any[] = []): any[] {
@@ -397,6 +453,7 @@ export class BeadsAdapter {
   private runQuery(sql: string, params: any[] = []) {
       if (!this.db) return;
       this.db.run(sql, params);
-      this.save();
+      this.isDirty = true;
+      this.scheduleSave();
   }
 }

@@ -77,7 +77,7 @@ export const IssueUpdateSchema = z.object({
     title: z.string().max(500).optional(),
     description: z.string().max(10000).optional(),
     priority: z.number().int().min(0).max(4).optional(),
-    issue_type: z.enum(['task', 'bug', 'feature']).optional(),
+    issue_type: z.enum(['task', 'bug', 'feature', 'epic', 'chore']).optional(),
     assignee: z.string().max(100).nullable().optional(),
     estimated_minutes: z.number().int().min(0).nullable().optional(),
     acceptance_criteria: z.string().max(10000).optional(),
@@ -91,7 +91,7 @@ export const IssueCreateSchema = z.object({
   description: z.string().max(10000).optional(),
   status: z.enum(['open', 'in_progress', 'blocked', 'closed']).optional(),
   priority: z.number().int().min(0).max(4).optional(),
-  issue_type: z.enum(['task', 'bug', 'feature']).optional(),
+  issue_type: z.enum(['task', 'bug', 'feature', 'epic', 'chore']).optional(),
   assignee: z.string().max(100).nullable().optional(),
   estimated_minutes: z.number().int().min(0).nullable().optional()
 });

@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import * as net from "net";
 import { BeadsAdapter } from "./beadsAdapter";
 import { getWebviewHtml } from "./webview";
 import {
@@ -10,7 +9,8 @@ import {
   IssueCreateSchema,
   CommentAddSchema,
   LabelSchema,
-  DependencySchema
+  DependencySchema,
+  SetStatusSchema
 } from "./types";
 
 type WebMsg =
@@ -32,8 +32,11 @@ type ExtMsg =
   | { type: "mutation.ok"; requestId: string }
   | { type: "mutation.error"; requestId: string; error: string };
 
+// Size limits for text operations
+const MAX_CHAT_TEXT = 50_000; // 50KB reasonable for chat
+const MAX_CLIPBOARD_TEXT = 100_000; // 100KB for clipboard
+
 export function activate(context: vscode.ExtensionContext) {
-  net.setDefaultAutoSelectFamilyAttemptTimeout(1000);
   console.log('[BeadsAdapter] Environment Versions:', JSON.stringify(process.versions, null, 2));
   const output = vscode.window.createOutputChannel("Beads Kanban");
   const adapter = new BeadsAdapter(output);
@@ -96,19 +99,35 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (msg.type === "issue.move") {
           const toStatus: IssueStatus = mapColumnToStatus(msg.payload.toColumn);
-          await adapter.setIssueStatus(msg.payload.id, toStatus);
+          const validation = SetStatusSchema.safeParse({
+            id: msg.payload.id,
+            status: toStatus
+          });
+          if (!validation.success) {
+            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid move data: ${validation.error.message}` });
+            return;
+          }
+          await adapter.setIssueStatus(validation.data.id, validation.data.status);
           post({ type: "mutation.ok", requestId: msg.requestId });
           await sendBoard(msg.requestId);
           return;
         }
 
         if (msg.type === "issue.addToChat") {
+          if (!msg.payload.text || msg.payload.text.length > MAX_CHAT_TEXT) {
+            post({ type: "mutation.error", requestId: msg.requestId, error: `Text too large for chat (max ${MAX_CHAT_TEXT} characters)` });
+            return;
+          }
           vscode.commands.executeCommand("workbench.action.chat.open", { query: msg.payload.text });
           post({ type: "mutation.ok", requestId: msg.requestId });
           return;
         }
 
         if (msg.type === "issue.copyToClipboard") {
+            if (!msg.payload.text || msg.payload.text.length > MAX_CLIPBOARD_TEXT) {
+              post({ type: "mutation.error", requestId: msg.requestId, error: `Text too large for clipboard (max ${MAX_CLIPBOARD_TEXT} characters)` });
+              return;
+            }
             vscode.env.clipboard.writeText(msg.payload.text);
             post({ type: "mutation.ok", requestId: msg.requestId });
             vscode.window.showInformationMessage("Issue context copied to clipboard.");
@@ -245,11 +264,20 @@ export function deactivate() {
   // nothing
 }
 
-function mapColumnToStatus(col: "ready" | "open" | "in_progress" | "blocked" | "closed"): IssueStatus {
+function mapColumnToStatus(col: BoardColumnKey): IssueStatus {
+  // Map column keys to issue statuses
   // Ready is derived from `ready_issues` view; status is still "open"
-  if (col === "ready") return "open";
-  if (col === "open") return "open";
-  if (col === "in_progress") return "in_progress";
-  if (col === "blocked") return "blocked";
-  return "closed";
+  const mapping: Record<BoardColumnKey, IssueStatus> = {
+    ready: "open",
+    open: "open",
+    in_progress: "in_progress",
+    blocked: "blocked",
+    closed: "closed"
+  };
+
+  const status = mapping[col];
+  if (!status) {
+    throw new Error(`Invalid column: ${col}`);
+  }
+  return status;
 }
