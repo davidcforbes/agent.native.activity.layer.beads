@@ -102,18 +102,18 @@ export const SetStatusSchema = z.object({
 });
 
 export const CommentAddSchema = z.object({
-  issueId: z.string().uuid(),
+  id: z.string().uuid(),
   text: z.string().min(1).max(10000),
   author: z.string().max(100)
 });
 
 export const LabelSchema = z.object({
-  issueId: z.string().uuid(),
+  id: z.string().uuid(),
   label: z.string().min(1).max(100)
 });
 
 export const DependencySchema = z.object({
-  issueId: z.string().uuid(),
-  dependsOnId: z.string().uuid(),
+  id: z.string().uuid(),
+  otherId: z.string().uuid(),
   type: z.enum(['blocks', 'parent-child']).optional()
 });

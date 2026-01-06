@@ -152,7 +152,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Let's use a simple default here if not provided.
             const author = msg.payload.author || "User";
             const validation = CommentAddSchema.safeParse({
-              issueId: msg.payload.id,
+              id: msg.payload.id,
               text: msg.payload.text,
               author
             });
@@ -160,7 +160,7 @@ export function activate(context: vscode.ExtensionContext) {
               post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${validation.error.message}` });
               return;
             }
-            await adapter.addComment(validation.data.issueId, validation.data.text, validation.data.author);
+            await adapter.addComment(validation.data.id, validation.data.text, validation.data.author);
             post({ type: "mutation.ok", requestId: msg.requestId });
             await sendBoard(msg.requestId);
             return;
@@ -168,14 +168,14 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (msg.type === "issue.addLabel") {
             const validation = LabelSchema.safeParse({
-              issueId: msg.payload.id,
+              id: msg.payload.id,
               label: msg.payload.label
             });
             if (!validation.success) {
               post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
               return;
             }
-            await adapter.addLabel(validation.data.issueId, validation.data.label);
+            await adapter.addLabel(validation.data.id, validation.data.label);
             post({ type: "mutation.ok", requestId: msg.requestId });
             await sendBoard(msg.requestId);
             return;
@@ -183,14 +183,14 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (msg.type === "issue.removeLabel") {
             const validation = LabelSchema.safeParse({
-              issueId: msg.payload.id,
+              id: msg.payload.id,
               label: msg.payload.label
             });
             if (!validation.success) {
               post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
               return;
             }
-            await adapter.removeLabel(validation.data.issueId, validation.data.label);
+            await adapter.removeLabel(validation.data.id, validation.data.label);
             post({ type: "mutation.ok", requestId: msg.requestId });
             await sendBoard(msg.requestId);
             return;
@@ -198,15 +198,15 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (msg.type === "issue.addDependency") {
             const validation = DependencySchema.safeParse({
-              issueId: msg.payload.id,
-              dependsOnId: msg.payload.otherId,
+              id: msg.payload.id,
+              otherId: msg.payload.otherId,
               type: msg.payload.type
             });
             if (!validation.success) {
               post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
               return;
             }
-            await adapter.addDependency(validation.data.issueId, validation.data.dependsOnId, validation.data.type);
+            await adapter.addDependency(validation.data.id, validation.data.otherId, validation.data.type);
             post({ type: "mutation.ok", requestId: msg.requestId });
             await sendBoard(msg.requestId);
             return;
@@ -214,14 +214,14 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (msg.type === "issue.removeDependency") {
             const validation = DependencySchema.safeParse({
-              issueId: msg.payload.id,
-              dependsOnId: msg.payload.otherId
+              id: msg.payload.id,
+              otherId: msg.payload.otherId
             });
             if (!validation.success) {
               post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
               return;
             }
-            await adapter.removeDependency(validation.data.issueId, validation.data.dependsOnId);
+            await adapter.removeDependency(validation.data.id, validation.data.otherId);
             post({ type: "mutation.ok", requestId: msg.requestId });
             await sendBoard(msg.requestId);
             return;

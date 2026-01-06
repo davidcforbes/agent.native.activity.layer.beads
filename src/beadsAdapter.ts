@@ -452,6 +452,8 @@ export class BeadsAdapter {
 
   private runQuery(sql: string, params: any[] = []) {
       if (!this.db) return;
+      // Note: db.run() automatically frees prepared statements in sql.js
+      // If you need to use db.prepare() manually in the future, you MUST call stmt.free()
       this.db.run(sql, params);
       this.isDirty = true;
       this.scheduleSave();
