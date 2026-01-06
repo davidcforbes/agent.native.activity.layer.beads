@@ -113,7 +113,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } catch (e) {
         statusBarItem.text = "$(error) Beads Daemon";
-        statusBarItem.tooltip = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
+        statusBarItem.tooltip = `Error: ${sanitizeError(e)}`;
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
       }
     };
@@ -208,7 +208,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
         } catch (e) {
-          vscode.window.showErrorMessage(`Daemon action failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+          vscode.window.showErrorMessage(`Daemon action failed: ${sanitizeError(e)}`);
         }
       })
     );
