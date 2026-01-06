@@ -6,6 +6,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "main.js"));
   const sortableUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "Sortable.min.js"));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "styles.css"));
+  const dompurifyUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "purify.min.js"));
 
   // Generate cryptographically secure nonce
   const nonce = crypto.randomBytes(16).toString('hex');
@@ -18,7 +19,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
         content="default-src 'none';
                  img-src ${webview.cspSource};
                  style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}' https://cdn.jsdelivr.net;
+                 script-src 'nonce-${nonce}';
                  base-uri 'none';
                  frame-ancestors 'none';
                  form-action 'none';">
@@ -89,7 +90,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 
   <div id="toast" class="toast hidden"></div>
 
-  <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+  <script nonce="${nonce}" src="${dompurifyUri}"></script>
   <script nonce="${nonce}" src="${sortableUri}"></script>
   <script nonce="${nonce}" src="${webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "marked.min.js"))}"></script>
   <script nonce="${nonce}" src="${scriptUri}"></script>

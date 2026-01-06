@@ -40,8 +40,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p . && npm run copy-wasm",
-    "copy-wasm": "cp node_modules/sql.js/dist/sql-wasm.wasm out/",
+    "compile": "tsc -p . && npm run copy-deps",
+    "copy-deps": "cp node_modules/sql.js/dist/sql-wasm.wasm out/ && cp node_modules/dompurify/dist/purify.min.js media/",
     "watch": "tsc -watch -p .",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",
@@ -52,6 +52,7 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.2",
     "@types/chai": "^4.3.20",
+    "@types/dompurify": "^3.0.5",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.30",
     "@types/sinon": "^17.0.4",

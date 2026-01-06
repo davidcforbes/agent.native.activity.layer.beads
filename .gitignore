@@ -2,3 +2,6 @@ node_modules/
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Build artifacts
+media/purify.min.js
