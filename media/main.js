@@ -18,6 +18,27 @@ const filterType = document.getElementById("filterType");
 const filterSearch = document.getElementById("filterSearch");
 
 let boardData = null;
+let detailDirty = false;
+
+function requestDetailClose() {
+    if (!detailDirty) {
+        detDialog.close();
+        return;
+    }
+    const shouldClose = confirm("Discard unsaved changes?");
+    if (shouldClose) {
+        detailDirty = false;
+        detDialog.close();
+    }
+}
+
+detDialog.addEventListener("cancel", (event) => {
+    if (!detailDirty) {
+        return;
+    }
+    event.preventDefault();
+    requestDetailClose();
+});
 // Restore collapsed columns state from VS Code persisted state
 const vscodeState = vscode.getState() || {};
 const collapsedColumns = new Set(vscodeState.collapsedColumns || []);
@@ -575,6 +596,69 @@ function openDetail(card) {
     const priorityOptions = [0, 1, 2, 3, 4];
 
     const isCreateMode = card.id === null;
+    const issueOptionsId = "issueIdOptions";
+    const issueOptionsHtml = (boardData?.cards || [])
+        .filter(c => !card.id || c.id !== card.id)
+        .map(c => `<option value="${escapeHtml(c.id)}" label="${escapeHtml(c.title)}"></option>`)
+        .join("");
+    const disabledAttr = isCreateMode ? 'disabled' : '';
+    const renderStructureSection = () => `
+                         <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Structure</label>
+                         
+                         <!-- Parent -->
+                         <div style="margin-bottom: 8px;">
+                            <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Parent:
+                                ${card.parent ? `
+                                    <span style="color: var(--vscode-editor-foreground);">${formatDep(card.parent)}</span>
+                                    <span id="removeParent" data-id="${escapeHtml(card.parent.id)}" style="cursor: pointer; color: var(--error); margin-left: 4px;">(Unlink)</span>
+                                ` : '<span style="font-style:italic;">None</span>'}
+                            </div>
+                            ${!card.parent ? `
+                                <div style="display: flex; gap: 4px;">
+                                    <input id="newParentId" type="text" placeholder="Parent Issue ID" list="${issueOptionsId}" ${disabledAttr} style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
+                                    <button id="btnSetParent" class="btn" ${disabledAttr} style="padding: 2px 8px;">Set</button>
+                                </div>
+                            ` : ''}
+                         </div>
+
+                         <!-- Blocker -->
+                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Blocked By:</div>
+                          ${(card.blocked_by && card.blocked_by.length > 0) ? `
+                          <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
+                            ${card.blocked_by.map(b => `
+                                <li>
+                                    ${formatDep(b)}
+                                    <span class="remove-blocker" data-id="${escapeHtml(b.id)}" style="cursor: pointer; color: var(--error); margin-left: 4px;">&times;</span>
+                                </li>
+                            `).join('')}
+                          </ul>
+                          ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted); margin-bottom: 4px;">None</div>'}
+                          <div style="display: flex; gap: 4px;">
+                                <input id="newBlockerId" type="text" placeholder="Blocker Issue ID" list="${issueOptionsId}" ${disabledAttr} style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
+                                <button id="btnAddBlocker" class="btn" ${disabledAttr} style="padding: 2px 8px;">Add</button>
+                          </div>
+
+                          <!-- Blocks (issues this item blocks) -->
+                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px; margin-top: 12px;">Blocks:</div>
+                          ${(card.blocks && card.blocks.length > 0) ? `
+                            <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
+                              ${card.blocks.map(b => `
+                                  <li>${formatDep(b)}</li>
+                              `).join('')}
+                            </ul>
+                          ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
+
+                          <!-- Children (sub-issues) -->
+                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px; margin-top: 12px;">Children:</div>
+                          ${(card.children && card.children.length > 0) ? `
+                            <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
+                              ${card.children.map(c => `
+                                  <li>${formatDep(c)}</li>
+                              `).join('')}
+                            </ul>
+                          ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
+                          ${isCreateMode ? '<div style="font-size: 10px; color: var(--muted); margin-top: 6px;">Create the issue to manage relationships.</div>' : ''}
+    `;
     
     form.innerHTML = `
         <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -654,7 +738,6 @@ function openDetail(card) {
             </div>
 
             <!-- Relationships & Tags -->
-            ${!isCreateMode ? `
             <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                     <div>
@@ -668,66 +751,19 @@ function openDetail(card) {
                             `).join('')}
                          </div>
                          <div style="display: flex; gap: 4px;">
-                            <input id="newLabel" type="text" placeholder="Add tag..." style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
-                            <button id="btnAddLabel" class="btn" style="padding: 2px 8px;">+</button>
+                            <input id="newLabel" type="text" placeholder="Add tag..." ${disabledAttr} style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
+                            <button id="btnAddLabel" class="btn" ${disabledAttr} style="padding: 2px 8px;">+</button>
                          </div>
+                         ${isCreateMode ? '<div style="font-size: 10px; color: var(--muted); margin-top: 4px;">Create the issue to add tags.</div>' : ''}
                     </div>
-                    <div>
-                         <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Structure</label>
-                         
-                         <!-- Parent -->
-                         <div style="margin-bottom: 8px;">
-                            <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Parent:
-                                ${card.parent ? `
-                                    <span style="color: var(--vscode-editor-foreground);">${formatDep(card.parent)}</span>
-                                    <span id="removeParent" data-id="${escapeHtml(card.parent.id)}" style="cursor: pointer; color: var(--error); margin-left: 4px;">(Unlink)</span>
-                                ` : '<span style="font-style:italic;">None</span>'}
-                            </div>
-                            ${!card.parent ? `
-                                <div style="display: flex; gap: 4px;">
-                                    <input id="newParentId" type="text" placeholder="Parent Issue ID" style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
-                                    <button id="btnSetParent" class="btn" style="padding: 2px 8px;">Set</button>
-                                </div>
-                            ` : ''}
-                         </div>
-
-                         <!-- Blocker -->
-                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">Blocked By:</div>
-                          <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
-                            ${(card.blocked_by || []).map(b => `
-                                <li>
-                                    ${formatDep(b)}
-                                    <span class="remove-blocker" data-id="${escapeHtml(b.id)}" style="cursor: pointer; color: var(--error); margin-left: 4px;">&times;</span>
-                                </li>
-                            `).join('')}
-                          </ul>
-                          <div style="display: flex; gap: 4px;">
-                                <input id="newBlockerId" type="text" placeholder="Blocker Issue ID" style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
-                                <button id="btnAddBlocker" class="btn" style="padding: 2px 8px;">Add</button>
-                          </div>
-
-                          <!-- Blocks (issues this item blocks) -->
-                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px; margin-top: 12px;">Blocks:</div>
-                          ${(card.blocks && card.blocks.length > 0) ? `
-                            <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
-                              ${card.blocks.map(b => `
-                                  <li>${formatDep(b)}</li>
-                              `).join('')}
-                            </ul>
-                          ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
-
-                          <!-- Children (sub-issues) -->
-                          <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px; margin-top: 12px;">Children:</div>
-                          ${(card.children && card.children.length > 0) ? `
-                            <ul style="margin: 0; padding-left: 16px; font-size: 11px; margin-bottom: 4px;">
-                              ${card.children.map(c => `
-                                  <li>${formatDep(c)}</li>
-                              `).join('')}
-                            </ul>
-                          ` : '<div style="font-size: 11px; font-style: italic; color: var(--muted);">None</div>'}
+                    <div id="structureSection">
+                        ${renderStructureSection()}
                     </div>
                 </div>
-            </div>` : ''}
+            </div>
+            <datalist id="${issueOptionsId}">
+                ${issueOptionsHtml}
+            </datalist>
 
             <!-- Event/Agent Metadata Panel (only shown when populated) -->
             ${(() => {
@@ -766,10 +802,9 @@ function openDetail(card) {
                 `;
             })()}
 
-${!isCreateMode ? `
             <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
                 <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Comments</label>
-                <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 200px; overflow-y: auto;">
+                <div id="commentsList" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 200px; overflow-y: auto;">
                     ${card.comments && card.comments.length > 0 ? card.comments.map(c => `
                         <div class="comment" style="padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--border);">
                             <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px; display: flex; justify-content: space-between;">
@@ -782,10 +817,11 @@ ${!isCreateMode ? `
                 </div>
                 
                 <div style="display: flex; gap: 8px;">
-                    <textarea id="newCommentText" rows="2" placeholder="Write a comment..." style="flex: 1; resize: vertical; margin: 0;"></textarea>
-                    <button type="button" id="btnPostComment" class="btn" style="align-self: flex-start; height: auto;">Post</button>
+                    <textarea id="newCommentText" rows="2" placeholder="Write a comment..." ${disabledAttr} style="flex: 1; resize: vertical; margin: 0;"></textarea>
+                    <button type="button" id="btnPostComment" class="btn" ${disabledAttr} style="align-self: flex-start; height: auto;">Post</button>
                 </div>
-            </div>` : ''}
+                ${isCreateMode ? '<div style="font-size: 10px; color: var(--muted); margin-top: 6px;">Create the issue to add comments.</div>' : ''}
+            </div>
 
             <div class="dialogActions" style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; gap: 8px;">
@@ -797,20 +833,42 @@ ${!isCreateMode ? `
                      <button type="button" id="btnCopy" class="btn icon-btn" title="Copy Context">📋 Copy</button>
                 </div>
             </div>
-            
-            ${!isCreateMode ? `
             <div style="font-size: 10px; color: var(--muted); text-align: right; margin-top: 8px; line-height: 1.5;">
-               ID: ${escapeHtml(card.id)}<br>
-               Created: ${new Date(card.created_at).toLocaleString()}<br>
-               Updated: ${new Date(card.updated_at).toLocaleString()}${card.closed_at ? `<br>Closed: ${new Date(card.closed_at).toLocaleString()}` : ''}
-            </div>` : ''}
+               ID: ${isCreateMode ? 'Assigned on create' : escapeHtml(card.id)}<br>
+               Created: ${isCreateMode ? 'Not yet created' : new Date(card.created_at).toLocaleString()}<br>
+               Updated: ${isCreateMode ? 'Not yet created' : new Date(card.updated_at).toLocaleString()}${!isCreateMode && card.closed_at ? `<br>Closed: ${new Date(card.closed_at).toLocaleString()}` : ''}
+            </div>
         </div>
     `;
+
+    detailDirty = false;
+    const markDirty = () => { detailDirty = true; };
+    const dirtyFieldIds = [
+        "editTitle",
+        "editStatus",
+        "editType",
+        "editPriority",
+        "editAssignee",
+        "editEst",
+        "editExtRef",
+        "editDueAt",
+        "editDeferUntil",
+        "editDesc",
+        "editAC",
+        "editDesign",
+        "editNotes"
+    ];
+    dirtyFieldIds.forEach((id) => {
+        const field = form.querySelector(`#${id}`);
+        if (!field) return;
+        field.addEventListener("input", markDirty);
+        field.addEventListener("change", markDirty);
+    });
 
     // Bind events
     form.querySelector("#btnClose").onclick = (e) => {
         e.preventDefault();
-        detDialog.close();
+        requestDetailClose();
     };
 
     form.querySelector("#btnSave").onclick = async (e) => {
@@ -842,6 +900,7 @@ ${!isCreateMode ? `
                     await postAsync("issue.update", { id: card.id, updates: data });
                     toast("Changes saved successfully");
                 }
+                detailDirty = false;
                 detDialog.close();
             } catch (err) {
                 // Show error feedback (mutation.error toast or timeout/network error)
@@ -853,30 +912,67 @@ ${!isCreateMode ? `
         }
     };
 
-const btnPostComment = form.querySelector("#btnPostComment");
-    if (btnPostComment) {
-        btnPostComment.onclick = async (e) => {
-        e.preventDefault();
-        const text = form.querySelector("#newCommentText").value.trim();
-        if (!text) return;
-
-        try {
-            await postAsync("issue.addComment", { id: card.id, text, author: "Me" });
-            toast("Comment posted");
-            detDialog.close();
-        } catch (err) {
-            console.error("Add comment failed:", err);
-            toast(`Failed to add comment: ${err.message}`);
+    function renderCommentsList() {
+        if (!card.comments || card.comments.length === 0) {
+            return '<div style="font-size: 12px; color: var(--muted); font-style: italic;">No comments yet.</div>';
         }
-    };
+        return card.comments.map(c => `
+            <div class="comment" style="padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--border);">
+                <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px; display: flex; justify-content: space-between;">
+                    <span>${escapeHtml(c.author)}</span>
+                    <span>${new Date(c.created_at).toLocaleString()}</span>
+                </div>
+                <div class="markdown-body" style="font-size: 13px;">${DOMPurify.sanitize(marked.parse(c.text), purifyConfig)}</div>
+            </div>
+        `).join('');
+    }
+
+    function refreshCommentsDisplay() {
+        const list = form.querySelector("#commentsList");
+        if (!list) return;
+        list.innerHTML = renderCommentsList();
+    }
+
+    const btnPostComment = form.querySelector("#btnPostComment");
+    if (btnPostComment && !isCreateMode) {
+        btnPostComment.onclick = async (e) => {
+            e.preventDefault();
+            const commentInput = form.querySelector("#newCommentText");
+            const text = commentInput.value.trim();
+            if (!text) return;
+
+            try {
+                await postAsync("issue.addComment", { id: card.id, text, author: "Me" });
+                if (!card.comments) card.comments = [];
+                card.comments.push({
+                    id: Date.now(),
+                    issue_id: card.id,
+                    author: "Me",
+                    text,
+                    created_at: new Date().toISOString()
+                });
+                commentInput.value = "";
+                refreshCommentsDisplay();
+                toast("Comment posted");
+            } catch (err) {
+                console.error("Add comment failed:", err);
+                toast(`Failed to add comment: ${err.message}`);
+            }
+        };
     }
 
 // Helper function to refresh labels display in the dialog
     function refreshLabelsDisplay() {
         const labelsContainer = form.querySelector(".labels-container");
         if (!labelsContainer) return;
-        
-        labelsContainer.innerHTML = (card.labels || []).map(l => `
+
+        const labels = card.labels || [];
+        if (labels.length === 0) {
+            labelsContainer.innerHTML = '<span style="font-size: 11px; font-style: italic; color: var(--muted);">None</span>';
+            return;
+        }
+
+        labelsContainer.innerHTML = labels.map(l => `
             <span class="badge" style="background: var(--bg2); padding: 4px 8px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
                 #${escapeHtml(l)}
                 <span class="remove-label" data-label="${escapeHtml(l)}" style="cursor: pointer; opacity: 0.7;">&times;</span>
@@ -884,29 +980,31 @@ const btnPostComment = form.querySelector("#btnPostComment");
         `).join('');
         
         // Re-attach remove handlers
-        labelsContainer.querySelectorAll(".remove-label").forEach(btn => {
-            btn.onclick = async (e) => {
-                const label = e.target.dataset.label;
-                try {
-                    await postAsync("issue.removeLabel", { id: card.id, label });
-                    // Update card.labels array
-                    card.labels = (card.labels || []).filter(l => l !== label);
-                    // Refresh the display
-                    refreshLabelsDisplay();
-                    toast("Label removed");
-                    // Refresh board in background
-                    postAsync("board.refresh", {});
-                } catch (err) {
-                    console.error("Remove label failed:", err);
-                    toast(`Failed to remove label: ${err.message}`);
-                }
-            };
-        });
+        if (!isCreateMode) {
+            labelsContainer.querySelectorAll(".remove-label").forEach(btn => {
+                btn.onclick = async (e) => {
+                    const label = e.target.dataset.label;
+                    try {
+                        await postAsync("issue.removeLabel", { id: card.id, label });
+                        // Update card.labels array
+                        card.labels = (card.labels || []).filter(l => l !== label);
+                        // Refresh the display
+                        refreshLabelsDisplay();
+                        toast("Label removed");
+                        // Refresh board in background
+                        postAsync("board.refresh", {});
+                    } catch (err) {
+                        console.error("Remove label failed:", err);
+                        toast(`Failed to remove label: ${err.message}`);
+                    }
+                };
+            });
+        }
     }
 
     // Label Events - supports comma-separated multiple labels
     const btnAddLabel = form.querySelector("#btnAddLabel");
-    if (btnAddLabel) {
+    if (btnAddLabel && !isCreateMode) {
         btnAddLabel.onclick = async (e) => {
         e.preventDefault();
         const input = form.querySelector("#newLabel");
@@ -962,68 +1060,95 @@ const btnPostComment = form.querySelector("#btnPostComment");
     // Initialize remove handlers for existing labels
     refreshLabelsDisplay();
 
-    // Dependency Events
-    const btnSetParent = form.querySelector("#btnSetParent");
-    if (btnSetParent) {
-        btnSetParent.onclick = async (e) => {
-            e.preventDefault();
-            const parentId = form.querySelector("#newParentId").value.trim();
-            if (!parentId) return;
-            try {
-                await postAsync("issue.addDependency", { id: card.id, otherId: parentId, type: 'parent-child' });
-                toast("Parent set");
-                detDialog.close();
-            } catch (err) {
-                console.error("Set parent failed:", err);
-                toast(`Failed to set parent: ${err.message}`);
-            }
-        };
-    }
-
-    const removeParentBtn = form.querySelector("#removeParent");
-    if (removeParentBtn) {
-        removeParentBtn.onclick = async (e) => {
-            try {
-                await postAsync("issue.removeDependency", { id: card.id, otherId: card.parent.id, type: 'parent-child' });
-                toast("Parent unlinked");
-                detDialog.close();
-            } catch (err) {
-                console.error("Remove parent failed:", err);
-                toast(`Failed to remove parent: ${err.message}`);
-            }
-        };
-    }
-
-const btnAddBlocker = form.querySelector("#btnAddBlocker");
-    if (btnAddBlocker) {
-        btnAddBlocker.onclick = async (e) => {
-        e.preventDefault();
-        const blockerId = form.querySelector("#newBlockerId").value.trim();
-        if (!blockerId) return;
+    async function refreshRelationshipsFromBoard() {
+        if (!card.id) return;
         try {
-            await postAsync("issue.addDependency", { id: card.id, otherId: blockerId, type: 'blocks' });
-            toast("Blocker added");
-            detDialog.close();
+            const refreshed = await postAsync("board.refresh", {});
+            const updated = refreshed?.cards?.find((c) => c.id === card.id);
+            if (updated) {
+                card.parent = updated.parent;
+                card.children = updated.children;
+                card.blocks = updated.blocks;
+                card.blocked_by = updated.blocked_by;
+            }
         } catch (err) {
-            console.error("Add blocker failed:", err);
-            toast(`Failed to add blocker: ${err.message}`);
+            console.error("Refresh relationships failed:", err);
         }
-    };
+        refreshStructureSection();
     }
 
-    form.querySelectorAll(".remove-blocker").forEach(btn => {
-        btn.onclick = async (e) => {
-            const blockerId = e.target.dataset.id;
-            try {
-                await postAsync("issue.removeDependency", { id: card.id, otherId: blockerId, type: 'blocks' });
-                toast("Blocker removed");
-                detDialog.close();
-            } catch (err) {
-                console.error("Remove blocker failed:", err);
-                toast(`Failed to remove blocker: ${err.message}`);
-            }
-        };
-    });
+    function refreshStructureSection() {
+        const structure = form.querySelector("#structureSection");
+        if (!structure) return;
+        structure.innerHTML = renderStructureSection();
+        bindStructureEvents();
+    }
+
+    function bindStructureEvents() {
+        const btnSetParent = form.querySelector("#btnSetParent");
+        if (btnSetParent && !isCreateMode) {
+            btnSetParent.onclick = async (e) => {
+                e.preventDefault();
+                const parentId = form.querySelector("#newParentId").value.trim();
+                if (!parentId) return;
+                try {
+                    await postAsync("issue.addDependency", { id: card.id, otherId: parentId, type: 'parent-child' });
+                    toast("Parent set");
+                    await refreshRelationshipsFromBoard();
+                } catch (err) {
+                    console.error("Set parent failed:", err);
+                    toast(`Failed to set parent: ${err.message}`);
+                }
+            };
+        }
+
+        const removeParentBtn = form.querySelector("#removeParent");
+        if (removeParentBtn && !isCreateMode) {
+            removeParentBtn.onclick = async (e) => {
+                try {
+                    await postAsync("issue.removeDependency", { id: card.id, otherId: card.parent.id, type: 'parent-child' });
+                    toast("Parent unlinked");
+                    await refreshRelationshipsFromBoard();
+                } catch (err) {
+                    console.error("Remove parent failed:", err);
+                    toast(`Failed to remove parent: ${err.message}`);
+                }
+            };
+        }
+
+        const btnAddBlocker = form.querySelector("#btnAddBlocker");
+        if (btnAddBlocker && !isCreateMode) {
+            btnAddBlocker.onclick = async (e) => {
+                e.preventDefault();
+                const blockerId = form.querySelector("#newBlockerId").value.trim();
+                if (!blockerId) return;
+                try {
+                    await postAsync("issue.addDependency", { id: card.id, otherId: blockerId, type: 'blocks' });
+                    toast("Blocker added");
+                    await refreshRelationshipsFromBoard();
+                } catch (err) {
+                    console.error("Add blocker failed:", err);
+                    toast(`Failed to add blocker: ${err.message}`);
+                }
+            };
+        }
+
+        form.querySelectorAll(".remove-blocker").forEach(btn => {
+            btn.onclick = async (e) => {
+                const blockerId = e.target.dataset.id;
+                try {
+                    await postAsync("issue.removeDependency", { id: card.id, otherId: blockerId, type: 'blocks' });
+                    toast("Blocker removed");
+                    await refreshRelationshipsFromBoard();
+                } catch (err) {
+                    console.error("Remove blocker failed:", err);
+                    toast(`Failed to remove blocker: ${err.message}`);
+                }
+            };
+        });
+    }
+
+    bindStructureEvents();
 
     // Context Helpers
     function getContext() {
