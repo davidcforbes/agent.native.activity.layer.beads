@@ -271,8 +271,9 @@ function activate(context) {
                 startDaemonPolling(); // Start polling when first panel opens
             }
             const readOnly = vscode.workspace.getConfiguration().get("beadsKanban.readOnly", false);
-            // Track disposal state
+            // Track disposal state and initial load
             let isDisposed = false;
+            let initialLoadSent = false;
             const post = (msg) => {
                 if (isDisposed) {
                     output.appendLine(`[Extension] Attempted to post to disposed webview: ${msg.type}`);
@@ -292,6 +293,7 @@ function activate(context) {
                     return;
                 }
                 output.appendLine(`[Extension] sendBoard called with requestId: ${requestId}`);
+                initialLoadSent = true; // Mark that we've sent board data
                 try {
                     const data = await adapter.getBoard();
                     output.appendLine(`[Extension] Got board data: ${data.cards.length} cards`);
@@ -527,15 +529,19 @@ function activate(context) {
                     }
                 });
             }
-            // initial load - give webview time to initialize
-            output.appendLine('[Extension] Triggering initial board load');
+            // initial load - give webview time to initialize (safety net)
+            // Skip if webview already requested the initial load
+            output.appendLine('[Extension] Triggering initial board load timeout');
             setTimeout(() => {
-                if (!isDisposed) {
-                    output.appendLine('[Extension] Sending initial board data');
-                    sendBoard(`init-${Date.now()}`);
+                if (isDisposed) {
+                    output.appendLine('[Extension] Panel disposed before initial load timeout');
+                }
+                else if (initialLoadSent) {
+                    output.appendLine('[Extension] Skipping timeout load - webview already loaded');
                 }
                 else {
-                    output.appendLine('[Extension] Panel disposed before initial load');
+                    output.appendLine('[Extension] Sending initial board data from timeout');
+                    sendBoard(`init-${Date.now()}`);
                 }
             }, 500);
         }

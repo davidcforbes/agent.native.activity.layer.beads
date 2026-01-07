@@ -53,14 +53,22 @@ export class DaemonBeadsAdapter {
 
       child.on('close', (code) => {
         if (code === 0) {
+          const trimmed = stdout.trim();
+          if (!trimmed) {
+            // No output - success for mutation commands
+            resolve(null);
+            return;
+          }
+
           try {
-            // Parse JSON if stdout has content
-            const result = stdout.trim() ? JSON.parse(stdout) : null;
+            // Try parsing as JSON (for query commands like list/show)
+            const result = JSON.parse(trimmed);
             resolve(result);
           } catch (error) {
-            this.output.appendLine(`[DaemonBeadsAdapter] JSON parse error: ${error}`);
-            this.output.appendLine(`[DaemonBeadsAdapter] Stdout: ${stdout}`);
-            reject(new Error(`Failed to parse JSON output: ${error}`));
+            // Not JSON - likely a friendly message from mutation commands
+            // This is fine, just return null to indicate success
+            this.output.appendLine(`[DaemonBeadsAdapter] Non-JSON output: ${trimmed}`);
+            resolve(null);
           }
         } else {
           this.output.appendLine(`[DaemonBeadsAdapter] Command failed (exit ${code}): ${stderr || stdout}`);
@@ -123,8 +131,9 @@ export class DaemonBeadsAdapter {
    * No-op for daemon adapter (not needed for external save detection)
    */
   public isRecentSelfSave(): boolean {
-    // Consider a mutation "recent" if it happened within the last 500ms
-    return (Date.now() - this.lastMutationTime) < 500;
+    // Consider a mutation "recent" if it happened within the last 2 seconds
+    // This accounts for: bd command execution (~500ms), file write, file watcher debounce (300ms), and buffer
+    return (Date.now() - this.lastMutationTime) < 2000;
   }
 
   /**
@@ -185,13 +194,31 @@ export class DaemonBeadsAdapter {
 
       for (let i = 0; i < issueIds.length; i += BATCH_SIZE) {
         const batch = issueIds.slice(i, i + BATCH_SIZE);
-        const batchResults = await this.execBd(['show', '--json', ...batch]);
+        
+        try {
+          const batchResults = await this.execBd(['show', '--json', ...batch]);
 
-        if (!Array.isArray(batchResults)) {
-          throw new Error('Expected array from bd show --json <ids>');
+          if (!Array.isArray(batchResults)) {
+            throw new Error('Expected array from bd show --json <ids>');
+          }
+
+          detailedIssues.push(...batchResults);
+        } catch (error) {
+          // If batch fails (likely due to missing/invalid ID), try each issue individually
+          this.output.appendLine(`[DaemonBeadsAdapter] Batch show failed, retrying individually: ${error instanceof Error ? error.message : String(error)}`);
+          
+          for (const id of batch) {
+            try {
+              const singleResult = await this.execBd(['show', '--json', id]);
+              if (Array.isArray(singleResult) && singleResult.length > 0) {
+                detailedIssues.push(...singleResult);
+              }
+            } catch (singleError) {
+              // Skip this issue - it may have been deleted or is invalid
+              this.output.appendLine(`[DaemonBeadsAdapter] Skipping missing issue: ${id}`);
+            }
+          }
         }
-
-        detailedIssues.push(...batchResults);
       }
 
       const boardData = this.mapIssuesToBoardData(detailedIssues);
@@ -487,7 +514,7 @@ export class DaemonBeadsAdapter {
     defer_until?: string | null;
     status?: string;
   }): Promise<void> {
-    const args = ['update', id];
+    const args = ['update', id, '--no-daemon']; // Use --no-daemon to bypass daemon bug with --due flag
 
     if (updates.title !== undefined) args.push('--title', updates.title);
     if (updates.description !== undefined) args.push('--description', updates.description);
