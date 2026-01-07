@@ -6,5 +6,6 @@
             "name": "beads",
             "database": "${workspaceFolder:beads-kanban}/.beads/beads.db"
         }
-    ]
+    ],
+    "beadsKanban.useDaemonAdapter": true
 }
