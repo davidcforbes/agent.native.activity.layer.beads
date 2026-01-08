@@ -33,6 +33,10 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   <header class="topbar">
     <div class="title">Agent Native Abstraction Layer for Beads</div>
     <div class="actions">
+      <div class="view-toggle">
+        <button id="viewKanbanBtn" class="view-toggle-btn active">Kanban</button>
+        <button id="viewTableBtn" class="view-toggle-btn">Table</button>
+      </div>
       <div class="filters">
         <input id="filterSearch" type="text" placeholder="Search..." class="search-input" />
         <select id="filterPriority" class="select">

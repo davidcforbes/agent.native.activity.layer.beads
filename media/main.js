@@ -17,6 +17,9 @@ const filterPriority = document.getElementById("filterPriority");
 const filterType = document.getElementById("filterType");
 const filterSearch = document.getElementById("filterSearch");
 
+const viewKanbanBtn = document.getElementById("viewKanbanBtn");
+const viewTableBtn = document.getElementById("viewTableBtn");
+
 // Column-based state for incremental loading
 let columns = [];
 let columnState = {
@@ -49,13 +52,180 @@ detDialog.addEventListener("cancel", (event) => {
     event.preventDefault();
     requestDetailClose();
 });
-// Restore collapsed columns state from VS Code persisted state
+// Restore state from VS Code persisted state
 const vscodeState = vscode.getState() || {};
 const collapsedColumns = new Set(vscodeState.collapsedColumns || []);
 
-// Helper to persist collapsed columns state
+// View mode: 'kanban' (default) or 'table'
+let viewMode = vscodeState.viewMode || 'kanban';
+
+// Table-specific state
+let tableState = {
+  sorting: vscodeState.tableSorting || [], // Array of {id, dir: 'asc'|'desc'}
+  columnVisibility: vscodeState.tableColumnVisibility || {},
+  columnOrder: vscodeState.tableColumnOrder || [],
+  filters: vscodeState.tableFilters || {} // Additional table filters (status, assignee, labels)
+};
+
+// Table column definitions
+const tableColumns = [
+  {
+    id: 'type',
+    label: 'Type',
+    visible: true,
+    width: 80,
+    getValue: c => c.issue_type || 'task',
+    render: (c) => {
+      const type = c.issue_type || 'task';
+      return `<span class="badge badge-type-${type}">${escapeHtml(type)}</span>`;
+    },
+    sort: (a, b) => {
+      const order = ['epic', 'feature', 'bug', 'task', 'chore'];
+      const aType = a.issue_type || 'task';
+      const bType = b.issue_type || 'task';
+      return order.indexOf(aType) - order.indexOf(bType);
+    }
+  },
+  {
+    id: 'id',
+    label: 'ID',
+    visible: true,
+    width: 100,
+    getValue: c => c.id,
+    render: (c) => `<span class="table-id copy-id" data-full-id="${escapeHtml(c.id)}" title="Click to copy: ${escapeHtml(c.id)}">${escapeHtml(c.id.slice(-8))}</span>`,
+    sort: (a, b) => a.id.localeCompare(b.id)
+  },
+  {
+    id: 'title',
+    label: 'Title',
+    visible: true,
+    width: 300,
+    getValue: c => c.title,
+    render: (c) => `<span class="table-title">${escapeHtml(c.title)}</span>`,
+    sort: (a, b) => (a.title || '').localeCompare(b.title || '')
+  },
+  {
+    id: 'status',
+    label: 'Status',
+    visible: true,
+    width: 100,
+    getValue: c => c.status,
+    render: (c) => `<span class="badge">${escapeHtml(c.status || 'open')}</span>`,
+    sort: (a, b) => {
+      const order = ['open', 'in_progress', 'blocked', 'closed'];
+      return order.indexOf(a.status || 'open') - order.indexOf(b.status || 'open');
+    }
+  },
+  {
+    id: 'priority',
+    label: 'Priority',
+    visible: true,
+    width: 80,
+    getValue: c => c.priority,
+    render: (c) => `<span class="badge badge-priority-${c.priority}">P${c.priority}</span>`,
+    sort: (a, b) => (a.priority || 2) - (b.priority || 2)
+  },
+  {
+    id: 'assignee',
+    label: 'Assignee',
+    visible: true,
+    width: 120,
+    getValue: c => c.assignee || 'Unassigned',
+    render: (c) => {
+      if (c.assignee) {
+        return `<span class="badge badge-assignee">${escapeHtml(c.assignee)}</span>`;
+      }
+      return `<span class="badge badge-assignee badge-unassigned">Unassigned</span>`;
+    },
+    sort: (a, b) => (a.assignee || 'zzz').localeCompare(b.assignee || 'zzz')
+  },
+  {
+    id: 'labels',
+    label: 'Labels',
+    visible: true,
+    width: 150,
+    getValue: c => (c.labels || []).join(', '),
+    render: (c) => {
+      if (!c.labels || c.labels.length === 0) return '';
+      const labelBadges = c.labels.slice(0, 3).map(l => 
+        `<span class="badge">#${escapeHtml(l)}</span>`
+      ).join(' ');
+      const more = c.labels.length > 3 ? ` <span class="badge">+${c.labels.length - 3}</span>` : '';
+      return labelBadges + more;
+    },
+    sort: (a, b) => ((a.labels || []).join(',')).localeCompare((b.labels || []).join(','))
+  },
+  {
+    id: 'estimate',
+    label: 'Estimate',
+    visible: false,
+    width: 80,
+    getValue: c => c.estimated_minutes || 0,
+    render: (c) => {
+      if (!c.estimated_minutes) return '';
+      const hours = Math.floor(c.estimated_minutes / 60);
+      const mins = c.estimated_minutes % 60;
+      let timeStr = '';
+      if (hours > 0) timeStr += `${hours}h`;
+      if (mins > 0) timeStr += `${mins}m`;
+      return `<span class="badge badge-estimate">⏱ ${timeStr}</span>`;
+    },
+    sort: (a, b) => (a.estimated_minutes || 0) - (b.estimated_minutes || 0)
+  },
+  {
+    id: 'updated_at',
+    label: 'Updated',
+    visible: true,
+    width: 120,
+    getValue: c => c.updated_at,
+    render: (c) => {
+      if (!c.updated_at) return '';
+      const date = new Date(c.updated_at);
+      return `<span class="table-date">${date.toLocaleDateString()}</span>`;
+    },
+    sort: (a, b) => {
+      const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return bTime - aTime; // Most recent first
+    }
+  },
+  {
+    id: 'due_at',
+    label: 'Due Date',
+    visible: false,
+    width: 120,
+    getValue: c => c.due_at,
+    render: (c) => {
+      if (!c.due_at) return '';
+      const dueDate = new Date(c.due_at);
+      const now = new Date();
+      const isOverdue = dueDate < now;
+      return `<span class="badge ${isOverdue ? 'badge-overdue' : 'badge-due'}">📅 ${dueDate.toLocaleDateString()}</span>`;
+    },
+    sort: (a, b) => {
+      const aTime = a.due_at ? new Date(a.due_at).getTime() : Infinity;
+      const bTime = b.due_at ? new Date(b.due_at).getTime() : Infinity;
+      return aTime - bTime;
+    }
+  }
+];
+
+// Helper to persist all UI state
+function saveState() {
+    vscode.setState({
+        ...vscode.getState(),
+        collapsedColumns: [...collapsedColumns],
+        viewMode: viewMode,
+        tableSorting: tableState.sorting,
+        tableColumnVisibility: tableState.columnVisibility,
+        tableColumnOrder: tableState.columnOrder,
+        tableFilters: tableState.filters
+    });
+}
+
+// Legacy function name for backward compatibility
 function saveCollapsedColumnsState() {
-    vscode.setState({ ...vscode.getState(), collapsedColumns: [...collapsedColumns] });
+    saveState();
 }
 let activeRequests = 0;
 
@@ -239,14 +409,24 @@ function columnForCard(card) {
     return "blocked"; // Default fallback
 }
 
+// Dispatch to the appropriate render function based on view mode
 function render() {
-    console.log('[Webview] render() called, columnState:', columnState);
+    console.log('[Webview] render() called, viewMode:', viewMode, 'columnState:', columnState);
     if (!columns || columns.length === 0) {
         console.log('[Webview] render() aborted - no columns');
         return;
     }
 
-    console.log('[Webview] render() - columns:', columns.length);
+    if (viewMode === 'table') {
+        renderTable();
+    } else {
+        renderKanban();
+    }
+}
+
+// Kanban view rendering
+function renderKanban() {
+    console.log('[Webview] renderKanban() - columns:', columns.length);
 
     // Filtering
     const pVal = filterPriority.value;
@@ -506,7 +686,365 @@ function render() {
         colWrap.appendChild(dropZone);
         boardEl.appendChild(colWrap);
     }
-    console.log('[Webview] render() completed successfully - DOM rebuilt with', columns.length, 'columns');
+    console.log('[Webview] renderKanban() completed successfully - DOM rebuilt with', columns.length, 'columns');
+}
+
+// Flatten columnState into a deduplicated array of cards
+function flattenColumnState() {
+    const cardMap = new Map();
+    
+    // Iterate through all columns and collect cards
+    for (const col of columns) {
+        const colState = columnState[col.key];
+        if (colState && colState.cards) {
+            for (const card of colState.cards) {
+                // Use Map to deduplicate by id (last occurrence wins)
+                if (!cardMap.has(card.id)) {
+                    cardMap.set(card.id, card);
+                }
+            }
+        }
+    }
+    
+    return Array.from(cardMap.values());
+}
+
+// Check if there's more data to load across all columns
+function hasPartialData() {
+    for (const col of columns) {
+        const colState = columnState[col.key];
+        if (colState && colState.hasMore) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Get total count across all columns
+function getTotalCount() {
+    let total = 0;
+    for (const col of columns) {
+        const colState = columnState[col.key];
+        if (colState && colState.totalCount) {
+            total += colState.totalCount;
+        }
+    }
+    return total;
+}
+
+// Get loaded count across all columns
+function getLoadedCount() {
+    let loaded = 0;
+    for (const col of columns) {
+        const colState = columnState[col.key];
+        if (colState && colState.cards) {
+            loaded += colState.cards.length;
+        }
+    }
+    return loaded;
+}
+
+// Table view rendering
+function renderTable() {
+    console.log('[Webview] renderTable() called');
+
+    // Check if any column is loading
+    const isLoading = columns.some(col => {
+        const colState = columnState[col.key];
+        return colState && colState.loading;
+    });
+
+    // Flatten and deduplicate cards from all columns
+    let tableRows = flattenColumnState();
+    console.log('[Webview] Flattened', tableRows.length, 'unique cards');
+
+    // Apply existing filters (search, priority, type) plus table-specific filters
+    const searchTerm = filterSearch.value.toLowerCase().trim();
+    const priorityFilter = filterPriority.value;
+    const typeFilter = filterType.value;
+    const statusFilter = tableState.filters.status;
+    const assigneeFilter = tableState.filters.assignee;
+    const labelsFilter = tableState.filters.labels; // Array of labels to match
+
+    if (searchTerm || priorityFilter || typeFilter || statusFilter || assigneeFilter || labelsFilter) {
+        tableRows = tableRows.filter(card => {
+            // Search filter (title, id, and optionally description)
+            if (searchTerm) {
+                const matchesSearch = 
+                    card.title.toLowerCase().includes(searchTerm) ||
+                    card.id.toLowerCase().includes(searchTerm) ||
+                    (card.description && card.description.toLowerCase().includes(searchTerm));
+                if (!matchesSearch) return false;
+            }
+
+            // Priority filter
+            if (priorityFilter && String(card.priority) !== priorityFilter) {
+                return false;
+            }
+
+            // Type filter
+            if (typeFilter && card.issue_type !== typeFilter) {
+                return false;
+            }
+
+            // Status filter (supports presets and specific statuses)
+            if (statusFilter) {
+                if (statusFilter === 'not_closed') {
+                    if (card.status === 'closed') return false;
+                } else if (statusFilter === 'active') {
+                    if (card.status !== 'in_progress' && card.status !== 'open') return false;
+                } else if (statusFilter === 'blocked') {
+                    if (card.status !== 'blocked') return false;
+                } else if (statusFilter !== 'all') {
+                    // Specific status match
+                    if (card.status !== statusFilter) return false;
+                }
+            }
+
+            // Assignee filter
+            if (assigneeFilter) {
+                if (assigneeFilter === 'unassigned') {
+                    if (card.assignee) return false;
+                } else {
+                    if (card.assignee !== assigneeFilter) return false;
+                }
+            }
+
+            // Labels filter (must have ALL specified labels)
+            if (labelsFilter && labelsFilter.length > 0) {
+                if (!card.labels || card.labels.length === 0) return false;
+                const hasAllLabels = labelsFilter.every(label => 
+                    card.labels.includes(label)
+                );
+                if (!hasAllLabels) return false;
+            }
+
+            return true;
+        });
+        console.log('[Webview] After filtering:', tableRows.length, 'cards');
+    }
+
+    // Apply sorting (for now, just default to updated_at desc)
+    if (tableState.sorting.length > 0) {
+        // Apply multi-column sorting
+        tableRows.sort((a, b) => {
+            for (const sortSpec of tableState.sorting) {
+                const col = tableColumns.find(c => c.id === sortSpec.id);
+                if (!col || !col.sort) continue;
+                
+                const cmp = col.sort(a, b);
+                if (cmp !== 0) {
+                    return sortSpec.dir === 'desc' ? -cmp : cmp;
+                }
+            }
+            // Fallback to updated_at desc
+            const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+            const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+            return bTime - aTime;
+        });
+    } else {
+        // Default sort: updated_at desc
+        tableRows.sort((a, b) => {
+            const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+            const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+            return bTime - aTime;
+        });
+    }
+
+    // Get visible columns (respecting user preferences)
+    let visibleColumns = tableColumns.filter(col => {
+        // Use columnVisibility map if set, otherwise use default visible property
+        if (Object.keys(tableState.columnVisibility).length > 0) {
+            return tableState.columnVisibility[col.id] !== false;
+        }
+        return col.visible;
+    });
+
+    // Apply column order if set
+    if (tableState.columnOrder.length > 0) {
+        visibleColumns = tableState.columnOrder
+            .map(id => visibleColumns.find(c => c.id === id))
+            .filter(Boolean);
+    }
+
+    // Build table HTML
+    let tableHtml = `
+        <div class="table-view">
+            <div class="table-wrapper">
+                <table class="issues-table">
+                    <thead>
+                        <tr>
+                            ${visibleColumns.map(col => {
+                                const sortSpec = tableState.sorting.find(s => s.id === col.id);
+                                const sortIndicator = sortSpec 
+                                    ? `<span class="sort-indicator ${sortSpec.dir}">${sortSpec.dir === 'asc' ? '▲' : '▼'}</span>`
+                                    : '';
+                                return `<th class="sortable" data-column-id="${escapeHtml(col.id)}" style="width: ${col.width}px">${escapeHtml(col.label)}${sortIndicator}</th>`;
+                            }).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+    `;
+
+    for (const card of tableRows) {
+        tableHtml += '<tr class="table-row" data-id="' + escapeHtml(card.id) + '">';
+        for (const col of visibleColumns) {
+            const cellContent = col.render(card);
+            tableHtml += '<td>' + cellContent + '</td>';
+        }
+        tableHtml += '</tr>';
+    }
+
+    tableHtml += `
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+
+    boardEl.innerHTML = tableHtml;
+
+    // Add loading indicator or partial load banner
+    if (isLoading) {
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'table-footer';
+        loadingDiv.innerHTML = `
+            <div class="column-loading">
+                <div class="spinner"></div>
+                <span>Loading more issues...</span>
+            </div>
+        `;
+        boardEl.appendChild(loadingDiv);
+    } else if (hasPartialData()) {
+        const totalCount = getTotalCount();
+        const loadedCount = getLoadedCount();
+        const remaining = totalCount - loadedCount;
+        
+        const banner = document.createElement('div');
+        banner.className = 'table-footer';
+        banner.innerHTML = `
+            Showing ${loadedCount} of ${totalCount} issues (${remaining} remaining).
+            <button class="btn load-more-btn" id="tableLoadMoreBtn" style="margin-left: 12px;">Load More</button>
+        `;
+        boardEl.appendChild(banner);
+        
+        // Add load more handler
+        const loadMoreBtn = document.getElementById('tableLoadMoreBtn');
+        loadMoreBtn.addEventListener('click', async () => {
+            // Load more from all columns that have more data
+            for (const col of columns) {
+                const colState = columnState[col.key];
+                if (colState && colState.hasMore && !colState.loading) {
+                    try {
+                        colState.loading = true;
+                        render(); // Re-render to show loading state
+                        await postAsync('board.loadMore', { column: col.key });
+                    } catch (error) {
+                        console.error('[Webview] Load More failed for', col.key, ':', error);
+                        toast(`Failed to load more: ${error.message}`);
+                        colState.loading = false;
+                    }
+                }
+            }
+        });
+    } catch (error) {
+                        console.error('[Webview] Load More failed for', col.key, ':', error);
+                        toast(`Failed to load more: ${error.message}`);
+                        colState.loading = false;
+                    }
+                }
+            }
+        });
+    }
+
+    // Add click handlers to table rows
+    const rows = boardEl.querySelectorAll('.table-row');
+    for (const row of rows) {
+        const cardId = row.dataset.id;
+        const card = tableRows.find(c => c.id === cardId);
+        if (card) {
+            row.addEventListener('click', () => openDetail(card));
+            row.style.cursor = 'pointer';
+        }
+    }
+
+    // Add click handlers to sortable headers
+    const headers = boardEl.querySelectorAll('th.sortable');
+    for (const header of headers) {
+        const columnId = header.dataset.columnId;
+        header.addEventListener('click', (e) => {
+            handleColumnSort(columnId, e.shiftKey);
+        });
+    }
+
+    // Add keyboard navigation for table rows
+    for (const row of rows) {
+        row.setAttribute('tabindex', '0'); // Make rows focusable
+        row.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                row.click(); // Trigger the click handler
+            }
+        });
+    }
+
+    // Add copy handlers for ID cells
+    const idCells = boardEl.querySelectorAll('.copy-id');
+    for (const cell of idCells) {
+        cell.style.cursor = 'pointer';
+        cell.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent row click
+            const fullId = cell.dataset.fullId;
+            post('issue.copyToClipboard', { text: fullId });
+            toast(`Copied: ${fullId.slice(-8)}`);
+        });
+    }
+
+    console.log('[Webview] renderTable() completed -', tableRows.length, 'rows rendered');
+}
+
+// Handle column sorting
+function handleColumnSort(columnId, isShiftKey) {
+    console.log('[Webview] handleColumnSort:', columnId, 'shift:', isShiftKey);
+    
+    // Find existing sort for this column
+    const existingIndex = tableState.sorting.findIndex(s => s.id === columnId);
+    
+    if (!isShiftKey) {
+        // Single column sort: cycle through none -> asc -> desc -> none
+        if (existingIndex === -1) {
+            // Not sorted: set to asc
+            tableState.sorting = [{ id: columnId, dir: 'asc' }];
+        } else {
+            const currentDir = tableState.sorting[existingIndex].dir;
+            if (currentDir === 'asc') {
+                // asc -> desc
+                tableState.sorting = [{ id: columnId, dir: 'desc' }];
+            } else {
+                // desc -> none (clear sorting)
+                tableState.sorting = [];
+            }
+        }
+    } else {
+        // Multi-column sort: shift+click adds/cycles secondary sort
+        if (existingIndex === -1) {
+            // Add new sort as secondary
+            tableState.sorting.push({ id: columnId, dir: 'asc' });
+        } else {
+            const currentDir = tableState.sorting[existingIndex].dir;
+            if (currentDir === 'asc') {
+                // asc -> desc
+                tableState.sorting[existingIndex].dir = 'desc';
+            } else {
+                // desc -> remove this sort
+                tableState.sorting.splice(existingIndex, 1);
+            }
+        }
+    }
+    
+    console.log('[Webview] New sorting:', tableState.sorting);
+    saveState();
+    render();
 }
 
 function escapeHtml(s) {
@@ -516,6 +1054,36 @@ function escapeHtml(s) {
         .replaceAll(">", "&gt;")
         .replaceAll("\"", "&quot;")
         .replaceAll("'", "&#039;");
+}
+
+// View toggle event listeners
+viewKanbanBtn.addEventListener("click", () => {
+    if (viewMode !== 'kanban') {
+        viewMode = 'kanban';
+        viewKanbanBtn.classList.add('active');
+        viewTableBtn.classList.remove('active');
+        saveState();
+        render();
+    }
+});
+
+viewTableBtn.addEventListener("click", () => {
+    if (viewMode !== 'table') {
+        viewMode = 'table';
+        viewTableBtn.classList.add('active');
+        viewKanbanBtn.classList.remove('active');
+        saveState();
+        render();
+    }
+});
+
+// Initialize view toggle buttons based on saved state
+if (viewMode === 'table') {
+    viewTableBtn.classList.add('active');
+    viewKanbanBtn.classList.remove('active');
+} else {
+    viewKanbanBtn.classList.add('active');
+    viewTableBtn.classList.remove('active');
 }
 
 refreshBtn.addEventListener("click", () => post("board.refresh"));

@@ -74,6 +74,45 @@ body {
     background: var(--bg2);
 }
 
+/* View toggle buttons */
+.view-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.view-toggle-btn {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 13px;
+}
+
+.view-toggle-btn:not(:last-child) {
+    border-right: 1px solid var(--border);
+}
+
+.view-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--vscode-editor-foreground);
+}
+
+.view-toggle-btn.active {
+    background: var(--bg2);
+    color: var(--vscode-editor-foreground);
+    font-weight: 500;
+}
+
+.filters {
+    display: flex;
+    gap: 8px;
+}
+
 .board {
     display: flex;
     gap: 12px;
@@ -490,8 +529,6 @@ main {
 
 /* Utility Classes */
 .filters {
-    display: flex;
-    gap: 8px;
     margin-right: 12px;
 }
 
@@ -613,4 +650,200 @@ main {
     border-top-color: var(--vscode-editor-foreground);
     border-radius: 50%;
     animation: spin 1s linear infinite;
+}
+
+/* Table View Styles */
+.table-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.table-wrapper {
+    flex: 1;
+    overflow: auto;
+    padding: var(--pad);
+}
+
+.issues-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.issues-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.issues-table th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    white-space: nowrap;
+}
+
+.issues-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.issues-table th.sortable:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.issues-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+.issues-table tbody tr {
+    transition: background 0.15s ease;
+}
+
+.issues-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.issues-table tbody tr:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* Table cell content */
+.table-id {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.table-id.copy-id {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+}
+
+.table-id.copy-id:hover {
+    color: var(--vscode-editor-foreground);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.table-title {
+    font-weight: 500;
+}
+
+.table-date {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+/* Sort indicator */
+.sort-indicator {
+    display: inline-block;
+    margin-left: 6px;
+    opacity: 0.6;
+    font-size: 10px;
+}
+
+.sort-indicator.asc::after {
+    content: '▲';
+}
+
+.sort-indicator.desc::after {
+    content: '▼';
+}
+
+/* Table toolbar and footer */
+.table-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--pad);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.table-footer {
+    padding: var(--pad);
+    border-top: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+
+/* Column dialog (for column selection) */
+.column-dialog {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0;
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    outline: none;
+    min-width: 500px;
+}
+
+.column-dialog .dialog-header {
+    padding: 14px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+}
+
+.column-dialog .dialog-body {
+    padding: 14px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 12px;
+    max-height: 400px;
+}
+
+.column-dialog .column-list {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    min-height: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.column-dialog .column-item {
+    padding: 6px 8px;
+    margin: 2px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.column-dialog .column-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.column-dialog .column-item.selected {
+    background: rgba(77, 170, 252, 0.15);
+    border: 1px solid rgba(77, 170, 252, 0.3);
+}
+
+.column-dialog .dialog-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    justify-content: center;
+}
+
+.column-dialog .dialog-footer {
+    padding: 14px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
 }
