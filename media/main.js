@@ -1324,6 +1324,23 @@ window.addEventListener("message", (event) => {
         return;
     }
 
+    if (msg.type === "table.pageData") {
+        console.log('[Webview] Processing table.pageData message');
+        console.log('[Webview] Payload:', msg.payload);
+        
+        // Resolve pending request with the payload
+        if (msg.requestId && pendingRequests.has(msg.requestId)) {
+            const { resolve, timeoutId } = pendingRequests.get(msg.requestId);
+            // Clear timeout immediately
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            pendingRequests.delete(msg.requestId);
+            resolve(msg);  // Resolve with the full message so loadTablePage can check response.type
+        }
+        return;
+    }
+
     if (msg.type === "mutation.ok") {
         // Resolve pending request
         if (msg.requestId && pendingRequests.has(msg.requestId)) {
