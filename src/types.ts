@@ -161,8 +161,8 @@ export const IssueUpdateSchema = z.object({
     design: z.string().max(10000).optional(),
     notes: z.string().max(10000).optional(),
     external_ref: z.string().max(200).nullable().optional(),
-    due_at: z.string().nullable().optional(),
-    defer_until: z.string().nullable().optional()
+    due_at: z.union([z.string().datetime(), z.null()]).optional(),
+    defer_until: z.union([z.string().datetime(), z.null()]).optional()
   })
 });
 
@@ -178,8 +178,8 @@ export const IssueCreateSchema = z.object({
   design: z.string().max(10000).optional(),
   notes: z.string().max(10000).optional(),
   external_ref: z.string().max(200).nullable().optional(),
-  due_at: z.string().nullable().optional(),
-  defer_until: z.string().nullable().optional()
+  due_at: z.union([z.string().datetime(), z.null()]).optional(),
+  defer_until: z.union([z.string().datetime(), z.null()]).optional()
 });
 
 export const SetStatusSchema = z.object({

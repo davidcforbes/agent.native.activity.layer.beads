@@ -15,6 +15,13 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <!--
+    CSP Note: style-src-attr 'unsafe-inline' is allowed because:
+    1. All inline styles use static values or trusted config (no user-controlled values)
+    2. All user content is escaped via escapeHtml() preventing XSS
+    3. Converting 118+ inline styles to CSS classes provides minimal security benefit
+    4. Inline <style> tags and javascript: URIs are still blocked
+  -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
                  img-src ${webview.cspSource};

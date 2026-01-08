@@ -26,58 +26,125 @@ export class DaemonBeadsAdapter {
   }
 
   /**
-   * Execute a bd CLI command and return parsed JSON output
+   * Sanitize CLI argument to prevent command injection and parsing issues
+   * Removes null bytes, excessive whitespace, and other problematic characters
    */
-  private async execBd(args: string[]): Promise<any> {
+  private sanitizeCliArg(arg: string): string {
+    if (typeof arg !== 'string') {
+      return String(arg);
+    }
+
+    return arg
+      // Remove null bytes (can cause command truncation)
+      .replace(/\0/g, '')
+      // Replace newlines with spaces (prevents command splitting)
+      .replace(/[\r\n]+/g, ' ')
+      // Collapse multiple spaces into single space
+      .replace(/\s+/g, ' ')
+      // Trim leading/trailing whitespace
+      .trim();
+  }
+
+  /**
+   * Execute a bd CLI command and return parsed JSON output
+   * @param args Command arguments to pass to bd (will be sanitized)
+   * @param timeoutMs Timeout in milliseconds (default: 30000ms = 30s)
+   */
+  private async execBd(args: string[], timeoutMs: number = 30000): Promise<any> {
+    // Sanitize all arguments before passing to CLI
+    const sanitizedArgs = args.map(arg => this.sanitizeCliArg(arg));
     return new Promise((resolve, reject) => {
-      const command = `bd ${args.join(' ')}`;
-      const child = spawn('bd', args, {
+      const command = `bd ${sanitizedArgs.join(' ')}`;
+      const child = spawn('bd', sanitizedArgs, {
         cwd: this.workspaceRoot,
         shell: false
       });
 
       let stdout = '';
       let stderr = '';
+      let killed = false;
+
+      // Buffer size limit: 10MB to prevent memory issues
+      const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+
+      // Set up timeout
+      const timeoutHandle = setTimeout(() => {
+        if (!killed) {
+          killed = true;
+          child.kill('SIGTERM');
+          this.output.appendLine(`[DaemonBeadsAdapter] Command timed out after ${timeoutMs}ms: ${command}`);
+          reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`));
+        }
+      }, timeoutMs);
 
       child.stdout.on('data', (data) => {
         stdout += data.toString();
+
+        // Check buffer size limit
+        if (stdout.length > MAX_BUFFER_SIZE) {
+          if (!killed) {
+            killed = true;
+            clearTimeout(timeoutHandle);
+            child.kill('SIGTERM');
+            this.output.appendLine(`[DaemonBeadsAdapter] Command exceeded buffer limit (${MAX_BUFFER_SIZE} bytes): ${command}`);
+            reject(new Error(`Command output exceeded ${MAX_BUFFER_SIZE} bytes limit`));
+          }
+        }
       });
 
       child.stderr.on('data', (data) => {
         stderr += data.toString();
+
+        // Check buffer size limit for stderr too
+        if (stderr.length > MAX_BUFFER_SIZE) {
+          if (!killed) {
+            killed = true;
+            clearTimeout(timeoutHandle);
+            child.kill('SIGTERM');
+            this.output.appendLine(`[DaemonBeadsAdapter] Command error output exceeded buffer limit: ${command}`);
+            reject(new Error(`Command error output exceeded ${MAX_BUFFER_SIZE} bytes limit`));
+          }
+        }
       });
 
       child.on('error', (error) => {
-        this.output.appendLine(`[DaemonBeadsAdapter] Command error: ${error.message}`);
-        this.output.appendLine(`[DaemonBeadsAdapter] Command context: ${command} (cwd: ${this.workspaceRoot})`);
-        this.output.appendLine(`[DaemonBeadsAdapter] PATH: ${process.env.PATH ?? ''}`);
-        this.output.appendLine(`[DaemonBeadsAdapter] PATHEXT: ${process.env.PATHEXT ?? ''}`);
-        reject(error);
+        if (!killed) {
+          clearTimeout(timeoutHandle);
+          this.output.appendLine(`[DaemonBeadsAdapter] Command error: ${error.message}`);
+          this.output.appendLine(`[DaemonBeadsAdapter] Command context: ${command} (cwd: ${this.workspaceRoot})`);
+          this.output.appendLine(`[DaemonBeadsAdapter] PATH: ${process.env.PATH ?? ''}`);
+          this.output.appendLine(`[DaemonBeadsAdapter] PATHEXT: ${process.env.PATHEXT ?? ''}`);
+          reject(error);
+        }
       });
 
       child.on('close', (code) => {
-        if (code === 0) {
-          const trimmed = stdout.trim();
-          if (!trimmed) {
-            // No output - success for mutation commands
-            resolve(null);
-            return;
-          }
+        if (!killed) {
+          clearTimeout(timeoutHandle);
 
-          try {
-            // Try parsing as JSON (for query commands like list/show)
-            const result = JSON.parse(trimmed);
-            resolve(result);
-          } catch (error) {
-            // Not JSON - likely a friendly message from mutation commands
-            // This is fine, just return null to indicate success
-            this.output.appendLine(`[DaemonBeadsAdapter] Non-JSON output: ${trimmed}`);
-            resolve(null);
+          if (code === 0) {
+            const trimmed = stdout.trim();
+            if (!trimmed) {
+              // No output - success for mutation commands
+              resolve(null);
+              return;
+            }
+
+            try {
+              // Try parsing as JSON (for query commands like list/show)
+              const result = JSON.parse(trimmed);
+              resolve(result);
+            } catch (error) {
+              // Not JSON - likely a friendly message from mutation commands
+              // This is fine, just return null to indicate success
+              this.output.appendLine(`[DaemonBeadsAdapter] Non-JSON output: ${trimmed}`);
+              resolve(null);
+            }
+          } else {
+            this.output.appendLine(`[DaemonBeadsAdapter] Command context: ${command} (cwd: ${this.workspaceRoot})`);
+            this.output.appendLine(`[DaemonBeadsAdapter] Command failed (exit ${code}): ${stderr || stdout}`);
+            reject(new Error(`bd command failed with exit code ${code}: ${stderr || stdout}`));
           }
-        } else {
-          this.output.appendLine(`[DaemonBeadsAdapter] Command context: ${command} (cwd: ${this.workspaceRoot})`);
-          this.output.appendLine(`[DaemonBeadsAdapter] Command failed (exit ${code}): ${stderr || stdout}`);
-          reject(new Error(`bd command failed with exit code ${code}: ${stderr || stdout}`));
         }
       });
     });
@@ -136,9 +203,10 @@ export class DaemonBeadsAdapter {
    * No-op for daemon adapter (not needed for external save detection)
    */
   public isRecentSelfSave(): boolean {
-    // Consider a mutation "recent" if it happened within the last 2 seconds
+    // Consider a mutation "recent" if it happened within the last 3 seconds
     // This accounts for: bd command execution (~500ms), file write, file watcher debounce (300ms), and buffer
-    return (Date.now() - this.lastMutationTime) < 2000;
+    // Increased from 2s to 3s to prevent edge-case race conditions
+    return (Date.now() - this.lastMutationTime) < 3000;
   }
 
   /**
@@ -299,6 +367,11 @@ export class DaemonBeadsAdapter {
           result = await this.execBd(['list', '--status=closed', '--json', '--limit', '0']);
           break;
 
+        case 'open':
+          // Use bd list with status filter
+          result = await this.execBd(['list', '--status=open', '--json', '--limit', '0']);
+          break;
+
         default:
           throw new Error(`Unknown column: ${column}`);
       }
@@ -348,6 +421,12 @@ export class DaemonBeadsAdapter {
           // Use bd list with status filter
           const closedResult = await this.execBd(['list', '--status=closed', '--json', '--limit', String(offset + limit)]);
           basicIssues = Array.isArray(closedResult) ? closedResult.slice(offset, offset + limit) : [];
+          break;
+
+        case 'open':
+          // Use bd list with status filter
+          const openResult = await this.execBd(['list', '--status=open', '--json', '--limit', String(offset + limit)]);
+          basicIssues = Array.isArray(openResult) ? openResult.slice(offset, offset + limit) : [];
           break;
 
         default:

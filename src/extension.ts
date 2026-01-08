@@ -726,11 +726,19 @@ export function activate(context: vscode.ExtensionContext) {
             const requestId = `fs-${Date.now()}`;
             sendBoard(requestId);
           } catch (error) {
+            const errorMsg = `Failed to reload database: ${error instanceof Error ? error.message : String(error)}`;
+
+            // Send error to webview
             panel.webview.postMessage({
               type: "mutation.error",
               requestId: `fs-error-${Date.now()}`,
-              error: `Failed to reload database: ${error instanceof Error ? error.message : String(error)}`
+              error: errorMsg
             });
+
+            // Show warning to user so they know auto-refresh is broken
+            vscode.window.showWarningMessage(
+              `Beads auto-refresh failed: ${errorMsg}. Use the Refresh button to try again.`
+            );
           }
           refreshTimeout = null;
         }, 300);

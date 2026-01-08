@@ -310,13 +310,20 @@ export class BeadsAdapter {
   }
 
   /**
-   * Check if we recently saved the file ourselves (within last 2 seconds)
-   * This helps avoid reloading our own writes
+   * Check if we recently saved the file ourselves (within last 3 seconds)
+   * or if a save is currently in progress.
+   * This helps avoid reloading our own writes and prevents race conditions.
    */
   public isRecentSelfSave(): boolean {
+    // If currently saving, definitely consider it a recent self save
+    if (this.isSaving) {
+      return true;
+    }
+
+    // Check if we saved within the last 3 seconds
     if (this.lastSaveTime === 0) return false;
     const timeSinceLastSave = Date.now() - this.lastSaveTime;
-    return timeSinceLastSave < 2000; // 2 second window
+    return timeSinceLastSave < 3000; // 3 second window (increased from 2s to prevent edge cases)
   }
 
   /**
@@ -435,8 +442,8 @@ export class BeadsAdapter {
         LEFT JOIN blocked_issues bi ON bi.id = i.id
         WHERE i.deleted_at IS NULL
         ORDER BY i.priority ASC, i.updated_at DESC, i.created_at DESC
-        LIMIT ${maxIssues + 1};
-      `) as IssueRow[];
+        LIMIT ?;
+      `, [maxIssues + 1]) as IssueRow[];
 
     // Check if we hit the pagination limit
     const hasMoreIssues = issues.length > maxIssues;
@@ -756,6 +763,9 @@ export class BeadsAdapter {
         throw new Error(`Unknown column: ${column}`);
     }
 
+    // Add pagination parameters to params array
+    params.push(limit, offset);
+
     // Build the main query (same structure as getBoard)
     const issues = this.queryAll(`
       SELECT
@@ -802,7 +812,7 @@ export class BeadsAdapter {
       LEFT JOIN blocked_issues bi ON bi.id = i.id
       WHERE ${whereClause}
       ORDER BY i.priority ASC, i.updated_at DESC, i.created_at DESC
-      LIMIT ${limit} OFFSET ${offset};
+      LIMIT ? OFFSET ?;
     `, params) as IssueRow[];
 
     if (issues.length === 0) {
@@ -1130,54 +1140,27 @@ export class BeadsAdapter {
       // Atomic write: write to temp file then rename
       const tmpPath = this.dbPath + '.tmp';
       fs.writeFileSync(tmpPath, buffer);
-      
-      // Retry rename operation with exponential backoff (handles Windows file locks)
-      const maxRetries = 5;
-      let lastError: Error | null = null;
-      
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          fs.renameSync(tmpPath, this.dbPath);
-          lastError = null;
-          break; // Success!
-        } catch (error) {
-          lastError = error as Error;
-          
-          // Only retry on EPERM/EBUSY errors (file locked)
-          if (error instanceof Error && 
-              (error.message.includes('EPERM') || error.message.includes('EBUSY'))) {
-            
-            if (attempt < maxRetries - 1) {
-              // Exponential backoff: 10ms, 20ms, 40ms, 80ms
-              const delayMs = 10 * Math.pow(2, attempt);
-              this.output.appendLine(`[BeadsAdapter] Rename failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${delayMs}ms: ${error.message}`);
-              
-              // Synchronous sleep for simplicity
-              const start = Date.now();
-              while (Date.now() - start < delayMs) {
-                // Busy wait (not ideal but simple for short delays)
-              }
-            } else {
-              this.output.appendLine(`[BeadsAdapter] Rename failed after ${maxRetries} attempts: ${error.message}`);
-            }
-          } else {
-            // Non-lock error, don't retry
-            throw error;
-          }
-        }
-      }
-      
-      // If we exhausted retries, throw the last error
-      if (lastError) {
-        // Clean up temp file
+
+      // Rename temp file to final path
+      // On Windows file lock errors (EPERM/EBUSY), we fail fast and let scheduleSave retry naturally
+      try {
+        fs.renameSync(tmpPath, this.dbPath);
+      } catch (error) {
+        // Clean up temp file on failure
         try {
           if (fs.existsSync(tmpPath)) {
             fs.unlinkSync(tmpPath);
           }
-        } catch (e) {
+        } catch (cleanupError) {
           // Ignore cleanup errors
         }
-        throw lastError;
+
+        // Log and re-throw
+        if (error instanceof Error &&
+            (error.message.includes('EPERM') || error.message.includes('EBUSY'))) {
+          this.output.appendLine(`[BeadsAdapter] Rename failed (file locked): ${error.message}. Will retry via scheduleSave.`);
+        }
+        throw error;
       }
       
       // Update mtime tracking
