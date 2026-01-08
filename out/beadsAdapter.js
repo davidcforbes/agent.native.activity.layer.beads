@@ -582,6 +582,275 @@ class BeadsAdapter {
     `, [issueId]);
         return comments;
     }
+    /**
+     * Get the count of issues in a specific column.
+     * Uses the same logic as getBoard() for column determination.
+     */
+    async getColumnCount(column) {
+        if (!this.db)
+            await this.ensureConnected();
+        if (!this.db)
+            throw new Error('Failed to connect to database');
+        let query;
+        const params = [];
+        switch (column) {
+            case 'ready':
+                // Ready: open status AND in ready_issues view
+                query = `
+          SELECT COUNT(*) as count
+          FROM issues i
+          INNER JOIN ready_issues ri ON ri.id = i.id
+          WHERE i.status = 'open' AND i.deleted_at IS NULL;
+        `;
+                break;
+            case 'in_progress':
+                // In Progress: status = in_progress
+                query = `
+          SELECT COUNT(*) as count
+          FROM issues
+          WHERE status = 'in_progress' AND deleted_at IS NULL;
+        `;
+                break;
+            case 'blocked':
+                // Blocked: status = blocked OR has blockers OR (open but not ready)
+                query = `
+          SELECT COUNT(DISTINCT i.id) as count
+          FROM issues i
+          LEFT JOIN ready_issues ri ON ri.id = i.id
+          LEFT JOIN blocked_issues bi ON bi.id = i.id
+          WHERE i.deleted_at IS NULL
+            AND (
+              i.status = 'blocked'
+              OR COALESCE(bi.blocked_by_count, 0) > 0
+              OR (i.status = 'open' AND ri.id IS NULL)
+            );
+        `;
+                break;
+            case 'closed':
+                // Closed: status = closed
+                query = `
+          SELECT COUNT(*) as count
+          FROM issues
+          WHERE status = 'closed' AND deleted_at IS NULL;
+        `;
+                break;
+            default:
+                throw new Error(`Unknown column: ${column}`);
+        }
+        const result = this.queryAll(query, params);
+        return result.length > 0 ? result[0].count : 0;
+    }
+    /**
+     * Get paginated issues for a specific column.
+     * Returns BoardCard[] matching the same format as getBoard().
+     */
+    async getColumnData(column, offset = 0, limit = 50) {
+        if (!this.db)
+            await this.ensureConnected();
+        if (!this.db)
+            throw new Error('Failed to connect to database');
+        let whereClause;
+        const params = [];
+        switch (column) {
+            case 'ready':
+                // Ready: open status AND in ready_issues view
+                whereClause = `
+          i.status = 'open'
+          AND i.id IN (SELECT id FROM ready_issues)
+          AND i.deleted_at IS NULL
+        `;
+                break;
+            case 'in_progress':
+                // In Progress: status = in_progress
+                whereClause = `
+          i.status = 'in_progress'
+          AND i.deleted_at IS NULL
+        `;
+                break;
+            case 'blocked':
+                // Blocked: status = blocked OR has blockers OR (open but not ready)
+                whereClause = `
+          i.deleted_at IS NULL
+          AND (
+            i.status = 'blocked'
+            OR COALESCE(bi.blocked_by_count, 0) > 0
+            OR (i.status = 'open' AND ri.id IS NULL)
+          )
+        `;
+                break;
+            case 'closed':
+                // Closed: status = closed
+                whereClause = `
+          i.status = 'closed'
+          AND i.deleted_at IS NULL
+        `;
+                break;
+            default:
+                throw new Error(`Unknown column: ${column}`);
+        }
+        // Build the main query (same structure as getBoard)
+        const issues = this.queryAll(`
+      SELECT
+        i.id,
+        i.title,
+        i.description,
+        i.status,
+        i.priority,
+        i.issue_type,
+        i.assignee,
+        i.estimated_minutes,
+        i.created_at,
+        i.updated_at,
+        i.closed_at,
+        i.external_ref,
+        i.acceptance_criteria,
+        i.design,
+        i.notes,
+        i.due_at,
+        i.defer_until,
+        CASE WHEN ri.id IS NOT NULL THEN 1 ELSE 0 END AS is_ready,
+        COALESCE(bi.blocked_by_count, 0) AS blocked_by_count,
+        i.pinned,
+        i.is_template,
+        i.ephemeral,
+        i.event_kind,
+        i.actor,
+        i.target,
+        i.payload,
+        i.sender,
+        i.mol_type,
+        i.role_type,
+        i.rig,
+        i.agent_state,
+        i.last_activity,
+        i.hook_bead,
+        i.role_bead,
+        i.await_type,
+        i.await_id,
+        i.timeout_ns,
+        i.waiters
+      FROM issues i
+      LEFT JOIN ready_issues ri ON ri.id = i.id
+      LEFT JOIN blocked_issues bi ON bi.id = i.id
+      WHERE ${whereClause}
+      ORDER BY i.priority ASC, i.updated_at DESC, i.created_at DESC
+      LIMIT ${limit} OFFSET ${offset};
+    `, params);
+        if (issues.length === 0) {
+            return [];
+        }
+        const ids = issues.map((i) => i.id);
+        // Bulk load labels and dependencies (same as getBoard)
+        const labelsByIssue = new Map();
+        const parentMap = new Map();
+        const childrenMap = new Map();
+        const blockedByMap = new Map();
+        const blocksMap = new Map();
+        if (ids.length > 0) {
+            const placeholders = ids.map(() => "?").join(",");
+            // Fetch labels
+            const labelRows = this.queryAll(`
+        SELECT issue_id, label
+        FROM labels
+        WHERE issue_id IN (${placeholders})
+        ORDER BY label;
+      `, ids);
+            for (const r of labelRows) {
+                const arr = labelsByIssue.get(r.issue_id) ?? [];
+                arr.push(r.label);
+                labelsByIssue.set(r.issue_id, arr);
+            }
+            // Fetch dependencies
+            const allDeps = this.queryAll(`
+        SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
+               d.created_at, d.created_by, d.metadata, d.thread_id
+        FROM dependencies d
+        JOIN issues i1 ON i1.id = d.issue_id
+        JOIN issues i2 ON i2.id = d.depends_on_id
+        WHERE (d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders}));
+      `, [...ids, ...ids]);
+            for (const d of allDeps) {
+                const child = {
+                    id: d.issue_id,
+                    title: d.issue_title,
+                    created_at: d.created_at,
+                    created_by: d.created_by,
+                    metadata: d.metadata,
+                    thread_id: d.thread_id
+                };
+                const parent = {
+                    id: d.depends_on_id,
+                    title: d.depends_title,
+                    created_at: d.created_at,
+                    created_by: d.created_by,
+                    metadata: d.metadata,
+                    thread_id: d.thread_id
+                };
+                if (d.type === 'parent-child') {
+                    parentMap.set(d.issue_id, parent);
+                    const list = childrenMap.get(d.depends_on_id) ?? [];
+                    list.push(child);
+                    childrenMap.set(d.depends_on_id, list);
+                }
+                else if (d.type === 'blocks') {
+                    const blockedByList = blockedByMap.get(d.issue_id) ?? [];
+                    blockedByList.push(parent);
+                    blockedByMap.set(d.issue_id, blockedByList);
+                    const blocksList = blocksMap.get(d.depends_on_id) ?? [];
+                    blocksList.push(child);
+                    blocksMap.set(d.depends_on_id, blocksList);
+                }
+            }
+        }
+        // Map to BoardCard format (same as getBoard)
+        const cards = issues.map((r) => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            status: r.status,
+            priority: r.priority,
+            issue_type: r.issue_type,
+            assignee: r.assignee,
+            estimated_minutes: r.estimated_minutes,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            closed_at: r.closed_at,
+            external_ref: r.external_ref,
+            is_ready: r.is_ready === 1,
+            blocked_by_count: r.blocked_by_count,
+            acceptance_criteria: r.acceptance_criteria,
+            design: r.design,
+            notes: r.notes,
+            due_at: r.due_at,
+            defer_until: r.defer_until,
+            labels: labelsByIssue.get(r.id) ?? [],
+            pinned: r.pinned === 1,
+            is_template: r.is_template === 1,
+            ephemeral: r.ephemeral === 1,
+            event_kind: r.event_kind,
+            actor: r.actor,
+            target: r.target,
+            payload: r.payload,
+            sender: r.sender,
+            mol_type: r.mol_type,
+            role_type: r.role_type,
+            rig: r.rig,
+            agent_state: r.agent_state,
+            last_activity: r.last_activity,
+            hook_bead: r.hook_bead,
+            role_bead: r.role_bead,
+            await_type: r.await_type,
+            await_id: r.await_id,
+            timeout_ns: r.timeout_ns,
+            waiters: r.waiters,
+            parent: parentMap.get(r.id),
+            children: childrenMap.get(r.id),
+            blocked_by: blockedByMap.get(r.id),
+            blocks: blocksMap.get(r.id),
+            comments: [] // Comments are lazy-loaded on demand
+        }));
+        return cards;
+    }
     async createIssue(input) {
         if (!this.db)
             await this.ensureConnected();

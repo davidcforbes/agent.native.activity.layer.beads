@@ -246,7 +246,7 @@ export class DaemonBeadsAdapter {
       }
 
       const issue = result[0];
-      
+
       // Extract and map comments
       if (issue.comments && Array.isArray(issue.comments)) {
         return issue.comments.map((c: any) => ({
@@ -261,6 +261,136 @@ export class DaemonBeadsAdapter {
       return [];
     } catch (error) {
       this.output.appendLine(`[DaemonBeadsAdapter] Failed to get comments for ${issueId}: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Get the count of issues in a specific column.
+   * Uses bd CLI commands to query column-specific counts.
+   */
+  public async getColumnCount(column: string): Promise<number> {
+    try {
+      let result: any;
+
+      switch (column) {
+        case 'ready':
+          // Use bd ready to get issues with no blockers
+          result = await this.execBd(['ready', '--json', '--limit', '0']); // 0 = unlimited
+          break;
+
+        case 'in_progress':
+          // Use bd list with status filter
+          result = await this.execBd(['list', '--status=in_progress', '--json', '--limit', '0']);
+          break;
+
+        case 'blocked':
+          // Use bd blocked
+          result = await this.execBd(['blocked', '--json']);
+          break;
+
+        case 'closed':
+          // Use bd list with status filter
+          result = await this.execBd(['list', '--status=closed', '--json', '--limit', '0']);
+          break;
+
+        default:
+          throw new Error(`Unknown column: ${column}`);
+      }
+
+      return Array.isArray(result) ? result.length : 0;
+    } catch (error) {
+      this.output.appendLine(`[DaemonBeadsAdapter] Failed to get column count for ${column}: ${error}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Get paginated issues for a specific column.
+   * Returns BoardCard[] matching the same format as getBoard().
+   */
+  public async getColumnData(
+    column: string,
+    offset: number = 0,
+    limit: number = 50
+  ): Promise<BoardCard[]> {
+    try {
+      let basicIssues: any[];
+
+      switch (column) {
+        case 'ready':
+          // Use bd ready - it returns issues with no blockers
+          // Note: bd ready doesn't support --offset, so we fetch all and slice client-side
+          const readyResult = await this.execBd(['ready', '--json', '--limit', String(offset + limit)]);
+          basicIssues = Array.isArray(readyResult) ? readyResult.slice(offset, offset + limit) : [];
+          break;
+
+        case 'in_progress':
+          // Use bd list with status filter
+          // bd list supports --limit but not --offset, so fetch offset+limit and slice
+          const inProgressResult = await this.execBd(['list', '--status=in_progress', '--json', '--limit', String(offset + limit)]);
+          basicIssues = Array.isArray(inProgressResult) ? inProgressResult.slice(offset, offset + limit) : [];
+          break;
+
+        case 'blocked':
+          // Use bd blocked
+          // Note: bd blocked doesn't support pagination, fetch all and slice
+          const blockedResult = await this.execBd(['blocked', '--json']);
+          basicIssues = Array.isArray(blockedResult) ? blockedResult.slice(offset, offset + limit) : [];
+          break;
+
+        case 'closed':
+          // Use bd list with status filter
+          const closedResult = await this.execBd(['list', '--status=closed', '--json', '--limit', String(offset + limit)]);
+          basicIssues = Array.isArray(closedResult) ? closedResult.slice(offset, offset + limit) : [];
+          break;
+
+        default:
+          throw new Error(`Unknown column: ${column}`);
+      }
+
+      if (basicIssues.length === 0) {
+        return [];
+      }
+
+      // Step 2: Get full details for all issues using bd show (in batches)
+      const issueIds = basicIssues.map((issue: any) => issue.id);
+      const BATCH_SIZE = 50;
+      const detailedIssues: any[] = [];
+
+      for (let i = 0; i < issueIds.length; i += BATCH_SIZE) {
+        const batch = issueIds.slice(i, i + BATCH_SIZE);
+
+        try {
+          const batchResults = await this.execBd(['show', '--json', ...batch]);
+
+          if (!Array.isArray(batchResults)) {
+            throw new Error('Expected array from bd show --json <ids>');
+          }
+
+          detailedIssues.push(...batchResults);
+        } catch (error) {
+          // If batch fails, try each issue individually
+          this.output.appendLine(`[DaemonBeadsAdapter] Batch show failed, retrying individually: ${error instanceof Error ? error.message : String(error)}`);
+
+          for (const id of batch) {
+            try {
+              const singleResult = await this.execBd(['show', '--json', id]);
+              if (Array.isArray(singleResult) && singleResult.length > 0) {
+                detailedIssues.push(...singleResult);
+              }
+            } catch (singleError) {
+              this.output.appendLine(`[DaemonBeadsAdapter] Skipping missing issue: ${id}`);
+            }
+          }
+        }
+      }
+
+      // Map to BoardCard format using existing helper
+      const boardData = this.mapIssuesToBoardData(detailedIssues);
+      return boardData.cards;
+    } catch (error) {
+      this.output.appendLine(`[DaemonBeadsAdapter] Failed to get column data for ${column}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
