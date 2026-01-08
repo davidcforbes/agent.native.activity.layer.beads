@@ -560,3 +560,57 @@ main {
         transform: rotate(360deg);
     }
 }
+
+/* Load More button styles */
+.load-more-container {
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+    margin-top: 8px;
+}
+
+.load-more-btn {
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    color: var(--vscode-editor-foreground);
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+}
+
+.load-more-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--vscode-editor-foreground);
+}
+
+.load-more-btn:active {
+    transform: scale(0.98);
+}
+
+.load-more-btn:focus {
+    outline: 2px solid var(--vscode-focusBorder);
+    outline-offset: 2px;
+}
+
+/* Column loading spinner */
+.column-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.column-loading .spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: var(--vscode-editor-foreground);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}

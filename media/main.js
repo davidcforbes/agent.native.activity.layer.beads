@@ -459,6 +459,49 @@ function render() {
             dropZone.appendChild(el);
         }
 
+        // Add loading spinner if column is loading
+        const colState = columnState[col.key];
+        if (colState && colState.loading) {
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'column-loading';
+            loadingDiv.innerHTML = `
+                <div class="spinner"></div>
+                <span>Loading...</span>
+            `;
+            dropZone.appendChild(loadingDiv);
+        }
+
+        // Add Load More button if there are more cards to load
+        if (colState && colState.hasMore && !colState.loading) {
+            const loadMoreDiv = document.createElement('div');
+            loadMoreDiv.className = 'load-more-container';
+            
+            const remaining = colState.totalCount - colState.cards.length;
+            const btn = document.createElement('button');
+            btn.className = 'btn load-more-btn';
+            btn.textContent = `Load More (${remaining} remaining)`;
+            btn.dataset.column = col.key;
+            
+            btn.onclick = async () => {
+                try {
+                    // Set loading state
+                    columnState[col.key].loading = true;
+                    render(); // Re-render to show spinner
+                    
+                    // Request more data
+                    await postAsync('board.loadMore', { column: col.key });
+                } catch (error) {
+                    console.error('[Webview] Load More failed:', error);
+                    toast(`Failed to load more: ${error.message}`);
+                    columnState[col.key].loading = false;
+                    render();
+                }
+            };
+            
+            loadMoreDiv.appendChild(btn);
+            dropZone.appendChild(loadMoreDiv);
+        }
+
         colWrap.appendChild(header);
         colWrap.appendChild(dropZone);
         boardEl.appendChild(colWrap);
