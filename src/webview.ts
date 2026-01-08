@@ -41,7 +41,10 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 </head>
 <body>
   <header class="topbar">
-    <div class="title">Agent Native Abstraction Layer for Beads</div>
+    <div class="title">
+      <span class="title-text">Agent Native Abstraction Layer for Beads</span>
+      <button id="repoMenuBtn" class="repo-menu-btn" title="Select Repository">⋯</button>
+    </div>
     <div class="actions">
       <div class="view-toggle">
         <button id="viewKanbanBtn" class="view-toggle-btn active">Kanban</button>

@@ -4,6 +4,7 @@ const vscode = acquireVsCodeApi();
 const boardEl = document.getElementById("board");
 const refreshBtn = document.getElementById("refreshBtn");
 const newBtn = document.getElementById("newBtn");
+const repoMenuBtn = document.getElementById("repoMenuBtn");
 const toastEl = document.getElementById("toast");
 
 const detDialog = document.getElementById("detailDialog");
@@ -1108,6 +1109,11 @@ newBtn.addEventListener("click", () => {
         updated_at: new Date().toISOString()
     };
     openDetail(emptyCard);
+});
+
+repoMenuBtn.addEventListener("click", () => {
+    post("repo.select");
+    toast("Opening repository selector...");
 });
 
 // Create debounced render function for filter changes (300ms delay)

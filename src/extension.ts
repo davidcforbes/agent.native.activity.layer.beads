@@ -28,6 +28,7 @@ type WebMsg =
   | { type: "board.loadColumn"; requestId: string; payload: { column: BoardColumnKey; offset: number; limit: number } }
   | { type: "board.loadMore"; requestId: string; payload: { column: BoardColumnKey } }
   | { type: "table.loadPage"; requestId: string; payload: { filters: any; sorting: Array<{ id: string; dir: 'asc' | 'desc' }>; offset: number; limit: number } }
+  | { type: "repo.select"; requestId: string }
   | { type: "issue.create"; requestId: string; payload: { title: string; description?: string } }
   | { type: "issue.move"; requestId: string; payload: { id: string; toColumn: BoardColumnKey } }
   | { type: "issue.addToChat"; requestId: string; payload: { text: string } }
@@ -606,6 +607,53 @@ export function activate(context: vscode.ExtensionContext) {
       if (msg.type === "table.loadPage") {
         const { filters, sorting, offset, limit } = msg.payload;
         await handleTableLoadPage(msg.requestId, filters, sorting, offset, limit);
+        return;
+      }
+
+      if (msg.type === "repo.select") {
+        // Open folder picker to select a different beads repository
+        const selectedFolder = await vscode.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          openLabel: "Select Beads Repository Folder",
+          title: "Select a folder containing a .beads directory"
+        });
+
+        if (selectedFolder && selectedFolder[0]) {
+          const folderPath = selectedFolder[0].fsPath;
+          const fs = await import('fs/promises');
+          const path = await import('path');
+          const beadsPath = path.join(folderPath, '.beads');
+
+          try {
+            const stat = await fs.stat(beadsPath);
+            if (!stat.isDirectory()) {
+              vscode.window.showErrorMessage(`Selected folder does not contain a .beads directory.`);
+              post({ type: "mutation.error", requestId: msg.requestId, error: "No .beads directory found" });
+              return;
+            }
+
+            // Store the selected path in workspace state for future sessions
+            await context.workspaceState.update('beadsRepoPath', folderPath);
+
+            // Show info message
+            vscode.window.showInformationMessage(`Switched to repository: ${folderPath}. Please reload the extension to apply changes.`, 'Reload')
+              .then(action => {
+                if (action === 'Reload') {
+                  vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
+              });
+
+            post({ type: "mutation.ok", requestId: msg.requestId });
+          } catch (err) {
+            vscode.window.showErrorMessage(`Selected folder does not contain a .beads directory.`);
+            post({ type: "mutation.error", requestId: msg.requestId, error: "No .beads directory found" });
+          }
+        } else {
+          // User cancelled
+          post({ type: "mutation.ok", requestId: msg.requestId });
+        }
         return;
       }
 
