@@ -5,6 +5,7 @@ import { DaemonManager } from "./daemonManager";
 import { getWebviewHtml } from "./webview";
 import {
   BoardData,
+  BoardCard,
   BoardColumnKey,
   IssueStatus,
   IssueUpdateSchema,
@@ -12,12 +13,16 @@ import {
   CommentAddSchema,
   LabelSchema,
   DependencySchema,
-  SetStatusSchema
+  SetStatusSchema,
+  BoardLoadColumnSchema,
+  BoardLoadMoreSchema
 } from "./types";
 
 type WebMsg =
   | { type: "board.load"; requestId: string }
   | { type: "board.refresh"; requestId: string }
+  | { type: "board.loadColumn"; requestId: string; payload: { column: BoardColumnKey; offset: number; limit: number } }
+  | { type: "board.loadMore"; requestId: string; payload: { column: BoardColumnKey } }
   | { type: "issue.create"; requestId: string; payload: { title: string; description?: string } }
   | { type: "issue.move"; requestId: string; payload: { id: string; toColumn: BoardColumnKey } }
   | { type: "issue.addToChat"; requestId: string; payload: { text: string } }
@@ -31,6 +36,7 @@ type WebMsg =
 
 type ExtMsg =
   | { type: "board.data"; requestId: string; payload: BoardData }
+  | { type: "board.columnData"; requestId: string; payload: { column: BoardColumnKey; cards: BoardCard[]; offset: number; totalCount: number; hasMore: boolean } }
   | { type: "mutation.ok"; requestId: string }
   | { type: "mutation.error"; requestId: string; error: string };
 
@@ -295,6 +301,14 @@ export function activate(context: vscode.ExtensionContext) {
     let isDisposed = false;
     let initialLoadSent = false;
 
+    // Track loaded ranges per column for incremental loading
+    const loadedRanges = new Map<BoardColumnKey, Array<{ offset: number; limit: number }>>();
+    // Initialize with empty arrays for each column
+    loadedRanges.set('ready', []);
+    loadedRanges.set('in_progress', []);
+    loadedRanges.set('blocked', []);
+    loadedRanges.set('closed', []);
+
     const post = (msg: ExtMsg) => {
       if (isDisposed) {
         output.appendLine(`[Extension] Attempted to post to disposed webview: ${msg.type}`);
@@ -328,6 +342,81 @@ export function activate(context: vscode.ExtensionContext) {
       }
     };
 
+    const handleLoadColumn = async (requestId: string, column: BoardColumnKey, offset: number, limit: number) => {
+      if (isDisposed) {
+        output.appendLine(`[Extension] Skipping handleLoadColumn - webview is disposed`);
+        return;
+      }
+      output.appendLine(`[Extension] handleLoadColumn: column=${column}, offset=${offset}, limit=${limit}`);
+      
+      try {
+        // Validate the request
+        const validation = BoardLoadColumnSchema.safeParse({ column, offset, limit });
+        if (!validation.success) {
+          post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${validation.error.message}` });
+          return;
+        }
+
+        // Load the column data
+        const cards = await adapter.getColumnData(column, offset, limit);
+        const totalCount = await adapter.getColumnCount(column);
+        const hasMore = (offset + cards.length) < totalCount;
+
+        // Track loaded range
+        const ranges = loadedRanges.get(column) || [];
+        ranges.push({ offset, limit });
+        loadedRanges.set(column, ranges);
+
+        output.appendLine(`[Extension] Loaded ${cards.length} cards for column ${column} (${offset}-${offset + cards.length}/${totalCount})`);
+
+        // Send response
+        post({
+          type: 'board.columnData',
+          requestId,
+          payload: { column, cards, offset, totalCount, hasMore }
+        });
+      } catch (e) {
+        output.appendLine(`[Extension] Error in handleLoadColumn: ${sanitizeError(e)}`);
+        if (!isDisposed) {
+          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+        }
+      }
+    };
+
+    const handleLoadMore = async (requestId: string, column: BoardColumnKey) => {
+      if (isDisposed) {
+        output.appendLine(`[Extension] Skipping handleLoadMore - webview is disposed`);
+        return;
+      }
+      output.appendLine(`[Extension] handleLoadMore: column=${column}`);
+      
+      try {
+        // Validate the request
+        const validation = BoardLoadMoreSchema.safeParse({ column });
+        if (!validation.success) {
+          post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${validation.error.message}` });
+          return;
+        }
+
+        // Calculate next offset from loadedRanges
+        const ranges = loadedRanges.get(column) || [];
+        const nextOffset = ranges.reduce((max, r) => Math.max(max, r.offset + r.limit), 0);
+
+        // Use configured pageSize
+        const pageSize = vscode.workspace.getConfiguration('beadsKanban').get<number>('pageSize', 50);
+
+        output.appendLine(`[Extension] Loading more for column ${column} from offset ${nextOffset} with pageSize ${pageSize}`);
+
+        // Delegate to handleLoadColumn logic
+        await handleLoadColumn(requestId, column, nextOffset, pageSize);
+      } catch (e) {
+        output.appendLine(`[Extension] Error in handleLoadMore: ${sanitizeError(e)}`);
+        if (!isDisposed) {
+          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+        }
+      }
+    };
+
     // Set up message handler BEFORE setting HTML to avoid race condition
     panel.webview.onDidReceiveMessage(async (msg: WebMsg) => {
       output.appendLine(`[Extension] Received message: ${msg?.type} (requestId: ${msg?.requestId})`);
@@ -335,6 +424,18 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (msg.type === "board.load" || msg.type === "board.refresh") {
         sendBoard(msg.requestId);
+        return;
+      }
+
+      if (msg.type === "board.loadColumn") {
+        const { column, offset, limit } = msg.payload;
+        await handleLoadColumn(msg.requestId, column, offset, limit);
+        return;
+      }
+
+      if (msg.type === "board.loadMore") {
+        const { column } = msg.payload;
+        await handleLoadMore(msg.requestId, column);
         return;
       }
 
@@ -553,6 +654,9 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (e) {
           // Webview already disposed, ignore
         }
+        
+        // Clear loaded ranges tracking
+        loadedRanges.clear();
         
         if (refreshTimeout) {
           clearTimeout(refreshTimeout);

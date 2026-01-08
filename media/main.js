@@ -17,6 +17,16 @@ const filterPriority = document.getElementById("filterPriority");
 const filterType = document.getElementById("filterType");
 const filterSearch = document.getElementById("filterSearch");
 
+// Column-based state for incremental loading
+let columns = [];
+let columnState = {
+  ready: { cards: [], offset: 0, totalCount: 0, hasMore: false, loading: false },
+  in_progress: { cards: [], offset: 0, totalCount: 0, hasMore: false, loading: false },
+  blocked: { cards: [], offset: 0, totalCount: 0, hasMore: false, loading: false },
+  closed: { cards: [], offset: 0, totalCount: 0, hasMore: false, loading: false }
+};
+
+// Legacy boardData for backward compatibility
 let boardData = null;
 let detailDirty = false;
 
@@ -230,37 +240,31 @@ function columnForCard(card) {
 }
 
 function render() {
-    console.log('[Webview] render() called, boardData:', boardData);
-    if (!boardData) {
-        console.log('[Webview] render() aborted - no boardData');
-        return;
-    }
-    if (!boardData.columns || !boardData.cards) {
-        console.error('[Webview] Invalid boardData: missing columns or cards');
+    console.log('[Webview] render() called, columnState:', columnState);
+    if (!columns || columns.length === 0) {
+        console.log('[Webview] render() aborted - no columns');
         return;
     }
 
-    const columns = boardData.columns;
-    const cards = boardData.cards;
-    console.log('[Webview] render() - columns:', columns.length, 'cards:', cards.length);
+    console.log('[Webview] render() - columns:', columns.length);
 
     // Filtering
     const pVal = filterPriority.value;
     const tVal = filterType.value;
     const sVal = filterSearch.value.toLowerCase();
 
-    const filtered = cards.filter(c => {
-        if (pVal !== "" && c.priority !== parseInt(pVal)) return false;
-        if (tVal !== "" && c.issue_type !== tVal) return false;
-        if (sVal !== "" && !c.title.toLowerCase().includes(sVal)) return false;
-        return true;
-    });
-
+    // Filter within each column's loaded cards
     const byCol = {};
-    for (const c of columns) byCol[c.key] = [];
-    for (const card of filtered) {
-        const col = columnForCard(card);
-        (byCol[col] ?? (byCol[col] = [])).push(card);
+    for (const col of columns) {
+        const colKey = col.key;
+        const colCards = columnState[colKey]?.cards || [];
+        
+        byCol[colKey] = colCards.filter(c => {
+            if (pVal !== "" && c.priority !== parseInt(pVal)) return false;
+            if (tVal !== "" && c.issue_type !== tVal) return false;
+            if (sVal !== "" && !c.title.toLowerCase().includes(sVal)) return false;
+            return true;
+        });
     }
 
     console.log('[Webview] render() - filtered cards:', Object.values(byCol).flat().length);
@@ -320,7 +324,21 @@ function render() {
 
         const countDiv = document.createElement("div");
         countDiv.className = "columnCount";
-        countDiv.textContent = (byCol[col.key] || []).length;
+        
+        // Show "loaded / total" format for incremental loading
+        const colState = columnState[col.key];
+        const filteredCount = (byCol[col.key] || []).length;
+        
+        if (colState && colState.totalCount > colState.cards.length) {
+            // Partial load: show "filtered (loaded / total)"
+            countDiv.textContent = `${filteredCount} (${colState.cards.length} / ${colState.totalCount})`;
+        } else if (colState && colState.totalCount > 0) {
+            // Fully loaded: show "filtered / total"
+            countDiv.textContent = `${filteredCount} / ${colState.totalCount}`;
+        } else {
+            // Legacy or no data
+            countDiv.textContent = filteredCount;
+        }
 
         header.appendChild(titleDiv);
         header.appendChild(countDiv);
@@ -511,8 +529,63 @@ window.addEventListener("message", (event) => {
         console.log('[Webview] Processing board.data message');
         console.log('[Webview] Payload:', msg.payload);
         console.log('[Webview] Cards count:', msg.payload?.cards?.length);
+        
+        // Support both legacy flat cards array and new columnData structure
+        if (msg.payload.columnData) {
+            // New incremental loading format
+            console.log('[Webview] Using new columnData format');
+            columns = msg.payload.columns || [];
+            
+            // Initialize columnState from columnData
+            for (const col of ['ready', 'in_progress', 'blocked', 'closed']) {
+                const data = msg.payload.columnData[col];
+                if (data) {
+                    columnState[col] = {
+                        cards: data.cards || [],
+                        offset: data.offset || 0,
+                        totalCount: data.totalCount || 0,
+                        hasMore: data.hasMore || false,
+                        loading: false
+                    };
+                } else {
+                    // Reset to empty if not provided
+                    columnState[col] = { cards: [], offset: 0, totalCount: 0, hasMore: false, loading: false };
+                }
+            }
+        } else {
+            // Legacy format: flat cards array
+            console.log('[Webview] Using legacy flat cards array format');
+            columns = msg.payload.columns || [];
+            const cards = msg.payload.cards || [];
+            
+            // Distribute cards into columns
+            for (const col of ['ready', 'in_progress', 'blocked', 'closed']) {
+                columnState[col] = {
+                    cards: [],
+                    offset: 0,
+                    totalCount: 0,
+                    hasMore: false,
+                    loading: false
+                };
+            }
+            
+            for (const card of cards) {
+                const col = columnForCard(card);
+                if (columnState[col]) {
+                    columnState[col].cards.push(card);
+                }
+            }
+            
+            // Update counts
+            for (const col of ['ready', 'in_progress', 'blocked', 'closed']) {
+                columnState[col].totalCount = columnState[col].cards.length;
+            }
+        }
+        
+        // Maintain backward compatibility
         boardData = msg.payload;
-        console.log('[Webview] boardData assigned, calling render()');
+        
+        console.log('[Webview] columnState initialized, calling render()');
         render();
         console.log('[Webview] render() completed, calling hideLoading()');
         hideLoading();
@@ -521,6 +594,46 @@ window.addEventListener("message", (event) => {
         if (msg.requestId && pendingRequests.has(msg.requestId)) {
             const { resolve, timeoutId } = pendingRequests.get(msg.requestId);
             // Clear timeout immediately to prevent unnecessary memory overhead
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            pendingRequests.delete(msg.requestId);
+            resolve(msg.payload);
+        }
+        return;
+    }
+
+    if (msg.type === "board.columnData") {
+        console.log('[Webview] Processing board.columnData message');
+        const { column, cards, offset, totalCount, hasMore } = msg.payload;
+        
+        if (!columnState[column]) {
+            console.error('[Webview] Invalid column:', column);
+            return;
+        }
+        
+        // Update specific column
+        if (offset === 0) {
+            // Replace cards (refresh)
+            console.log(`[Webview] Replacing ${column} column data`);
+            columnState[column].cards = cards;
+        } else {
+            // Append cards (loading more)
+            console.log(`[Webview] Appending ${cards.length} cards to ${column} column`);
+            columnState[column].cards = [...columnState[column].cards, ...cards];
+        }
+        
+        columnState[column].offset = offset + cards.length;
+        columnState[column].totalCount = totalCount;
+        columnState[column].hasMore = hasMore;
+        columnState[column].loading = false;
+        
+        console.log(`[Webview] ${column} column updated: ${columnState[column].cards.length}/${totalCount} cards loaded`);
+        render();
+        
+        // Resolve any pending request
+        if (msg.requestId && pendingRequests.has(msg.requestId)) {
+            const { resolve, timeoutId } = pendingRequests.get(msg.requestId);
             if (timeoutId) {
                 clearTimeout(timeoutId);
             }
@@ -597,7 +710,16 @@ function openDetail(card) {
 
     const isCreateMode = card.id === null;
     const issueOptionsId = "issueIdOptions";
-    const issueOptionsHtml = (boardData?.cards || [])
+    
+    // Collect all cards from columnState for the datalist
+    const allCards = [];
+    for (const col of ['ready', 'in_progress', 'blocked', 'closed']) {
+        if (columnState[col]?.cards) {
+            allCards.push(...columnState[col].cards);
+        }
+    }
+    
+    const issueOptionsHtml = allCards
         .filter(c => !card.id || c.id !== card.id)
         .map(c => `<option value="${escapeHtml(c.id)}" label="${escapeHtml(c.title)}"></option>`)
         .join("");

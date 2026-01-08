@@ -125,10 +125,27 @@ export interface BoardColumn {
 export interface BoardData {
   columns: BoardColumn[];
   cards: BoardCard[];
+  // Enhanced fields for incremental loading (optional for backward compat)
+  columnData?: ColumnDataMap;
 }
+
+// Helper types for incremental loading
+export interface ColumnLoadState {
+  offset: number;
+  limit: number;
+  totalCount: number;
+  hasMore: boolean;
+}
+
+export interface ColumnData extends ColumnLoadState {
+  cards: BoardCard[];
+}
+
+export type ColumnDataMap = Record<BoardColumnKey, ColumnData>;
 
 // Zod validation schemas for runtime message validation
 const IssueIdSchema = z.string().min(1).max(200);
+const BoardColumnKeySchema = z.enum(['ready', 'open', 'in_progress', 'blocked', 'closed']);
 
 export const IssueUpdateSchema = z.object({
   id: IssueIdSchema,
@@ -185,4 +202,15 @@ export const DependencySchema = z.object({
   id: IssueIdSchema,
   otherId: IssueIdSchema,
   type: z.enum(['blocks', 'parent-child']).optional()
+});
+
+// Schemas for incremental loading messages
+export const BoardLoadColumnSchema = z.object({
+  column: BoardColumnKeySchema,
+  offset: z.number().int().min(0),
+  limit: z.number().int().min(1).max(500)
+});
+
+export const BoardLoadMoreSchema = z.object({
+  column: BoardColumnKeySchema
 });
