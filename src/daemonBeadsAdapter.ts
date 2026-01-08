@@ -331,9 +331,11 @@ export class DaemonBeadsAdapter {
    * Get board data from bd daemon
    */
   public async getBoard(): Promise<BoardData> {
-    // 1-second cache to reduce CLI overhead
+    // Configurable cache TTL to reduce CLI overhead (default: 5 seconds)
+    const cacheTTL = vscode.workspace.getConfiguration('beadsKanban').get<number>('daemonCacheTTL', 5000);
     const now = Date.now();
-    if (this.boardCache && (now - this.cacheTimestamp) < 1000) {
+    if (this.boardCache && (now - this.cacheTimestamp) < cacheTTL) {
+      this.output.appendLine(`[DaemonBeadsAdapter] Returning cached board data (age: ${now - this.cacheTimestamp}ms)`);
       return this.boardCache;
     }
 
