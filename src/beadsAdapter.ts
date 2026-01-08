@@ -501,20 +501,15 @@ export class BeadsAdapter {
       const lazyLoadDependencies = vscode.workspace.getConfiguration('beadsKanban').get<boolean>('lazyLoadDependencies', true);
       
       if (!lazyLoadDependencies) {
-        // Eager load all dependencies (legacy behavior)
-        // Fetch all relevant dependencies where either side is in our issue list
-        // Note: We might miss titles if the "other side" isn't in 'ids' (filtered list?).
-        // Actually, 'issues' query above fetches ALL issues (no WHERE clause except deleted_at IS NULL).
-        // So 'ids' should check all.
+        // Eager load all dependencies with batching to avoid N+1 problem
+        // Warning if attempting to eager load with many issues
+        if (ids.length > 500) {
+          this.output.appendLine(`[BeadsAdapter] Warning: Eager loading dependencies for ${ids.length} issues. Consider enabling lazyLoadDependencies for better performance.`);
+        }
         
-        const allDeps = this.queryAll(`
-          SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
-                 d.created_at, d.created_by, d.metadata, d.thread_id
-          FROM dependencies d
-          JOIN issues i1 ON i1.id = d.issue_id
-          JOIN issues i2 ON i2.id = d.depends_on_id
-          WHERE (d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders}));
-        `, [...ids, ...ids]) as {
+        // Batch dependencies loading to avoid loading too much data at once
+        const BATCH_SIZE = 100;
+        const allDeps: {
           issue_id: string;
           depends_on_id: string;
           type: string;
@@ -524,7 +519,33 @@ export class BeadsAdapter {
           created_by: string;
           metadata: string;
           thread_id: string;
-        }[];
+        }[] = [];
+        
+        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+          const batch = ids.slice(i, Math.min(i + BATCH_SIZE, ids.length));
+          const batchPlaceholders = batch.map(() => '?').join(', ');
+          
+          const batchDeps = this.queryAll(`
+            SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
+                   d.created_at, d.created_by, d.metadata, d.thread_id
+            FROM dependencies d
+            JOIN issues i1 ON i1.id = d.issue_id
+            JOIN issues i2 ON i2.id = d.depends_on_id
+            WHERE (d.issue_id IN (${batchPlaceholders}) OR d.depends_on_id IN (${batchPlaceholders}));
+          `, [...batch, ...batch]) as {
+            issue_id: string;
+            depends_on_id: string;
+            type: string;
+            issue_title: string;
+            depends_title: string;
+            created_at: string;
+            created_by: string;
+            metadata: string;
+            thread_id: string;
+          }[];
+          
+          allDeps.push(...batchDeps);
+        }
 
         for (const d of allDeps) {
           const child: DependencyInfo = {
@@ -945,15 +966,13 @@ export class BeadsAdapter {
       const lazyLoadDependencies = vscode.workspace.getConfiguration('beadsKanban').get<boolean>('lazyLoadDependencies', true);
       
       if (!lazyLoadDependencies) {
-        // Fetch dependencies
-        const allDeps = this.queryAll(`
-          SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
-                 d.created_at, d.created_by, d.metadata, d.thread_id
-          FROM dependencies d
-          JOIN issues i1 ON i1.id = d.issue_id
-          JOIN issues i2 ON i2.id = d.depends_on_id
-          WHERE (d.issue_id IN (${placeholders}) OR d.depends_on_id IN (${placeholders}));
-        `, [...ids, ...ids]) as {
+        // Eager load dependencies with batching to avoid N+1 problem
+        if (ids.length > 500) {
+          this.output.appendLine(`[BeadsAdapter] Warning: Eager loading dependencies for ${ids.length} issues. Consider enabling lazyLoadDependencies for better performance.`);
+        }
+        
+        const BATCH_SIZE = 100;
+        const allDeps: {
           issue_id: string;
           depends_on_id: string;
           type: string;
@@ -963,7 +982,33 @@ export class BeadsAdapter {
           created_by: string;
           metadata: string;
           thread_id: string;
-        }[];
+        }[] = [];
+        
+        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+          const batch = ids.slice(i, Math.min(i + BATCH_SIZE, ids.length));
+          const batchPlaceholders = batch.map(() => '?').join(', ');
+          
+          const batchDeps = this.queryAll(`
+            SELECT d.issue_id, d.depends_on_id, d.type, i1.title as issue_title, i2.title as depends_title,
+                   d.created_at, d.created_by, d.metadata, d.thread_id
+            FROM dependencies d
+            JOIN issues i1 ON i1.id = d.issue_id
+            JOIN issues i2 ON i2.id = d.depends_on_id
+            WHERE (d.issue_id IN (${batchPlaceholders}) OR d.depends_on_id IN (${batchPlaceholders}));
+          `, [...batch, ...batch]) as {
+            issue_id: string;
+            depends_on_id: string;
+            type: string;
+            issue_title: string;
+            depends_title: string;
+            created_at: string;
+            created_by: string;
+            metadata: string;
+            thread_id: string;
+          }[];
+          
+          allDeps.push(...batchDeps);
+        }
 
         for (const d of allDeps) {
           const child: DependencyInfo = {
