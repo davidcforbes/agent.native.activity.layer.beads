@@ -1102,6 +1102,222 @@ export class BeadsAdapter {
     return cards;
   }
 
+    /**
+     * Get paginated table data with server-side filtering and sorting.
+     * 
+     * @param filters Object containing filter criteria
+     * @param sorting Array of { id: string, dir: 'asc'|'desc' } for sorting
+     * @param offset Starting row index (0-based)
+     * @param limit Number of rows to return
+     * @returns Object containing filtered/sorted cards and total count
+     */
+    public async getTableData(
+        filters: {
+            search?: string;
+            priority?: string;
+            type?: string;
+            status?: string;
+            assignee?: string;
+            labels?: string[];
+        },
+        sorting: Array<{ id: string; dir: 'asc' | 'desc' }>,
+        offset: number,
+        limit: number
+    ): Promise<{ cards: BoardCard[]; totalCount: number }> {
+        if (!this.db) await this.ensureConnected();
+
+        this.output.appendLine(`[BeadsAdapter] getTableData: offset=${offset}, limit=${limit}, filters=${JSON.stringify(filters)}, sorting=${JSON.stringify(sorting)}`);
+
+        // Build WHERE clause from filters
+        const whereClauses: string[] = ['deleted_at IS NULL'];
+        const whereParams: any[] = [];
+
+        if (filters.search) {
+            const searchTerm = `%${filters.search}%`;
+            whereClauses.push('(title LIKE ? OR id LIKE ? OR description LIKE ?)');
+            whereParams.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        if (filters.priority) {
+            whereClauses.push('priority = ?');
+            whereParams.push(parseInt(filters.priority));
+        }
+
+        if (filters.type) {
+            whereClauses.push('issue_type = ?');
+            whereParams.push(filters.type);
+        }
+
+        if (filters.status) {
+            if (filters.status === 'not_closed') {
+                whereClauses.push('status != ?');
+                whereParams.push('closed');
+            } else if (filters.status === 'active') {
+                whereClauses.push('(status = ? OR status = ?)');
+                whereParams.push('in_progress', 'open');
+            } else if (filters.status === 'blocked') {
+                whereClauses.push('status = ?');
+                whereParams.push('blocked');
+            } else if (filters.status !== 'all') {
+                whereClauses.push('status = ?');
+                whereParams.push(filters.status);
+            }
+        }
+
+        if (filters.assignee) {
+            if (filters.assignee === 'unassigned') {
+                whereClauses.push('assignee IS NULL');
+            } else {
+                whereClauses.push('assignee = ?');
+                whereParams.push(filters.assignee);
+            }
+        }
+
+        // For labels filter, need to check if issue has ALL specified labels
+        if (filters.labels && filters.labels.length > 0) {
+            // Use EXISTS subquery to check for all labels
+            const labelChecks = filters.labels.map(() => 
+                'EXISTS (SELECT 1 FROM labels WHERE labels.issue_id = issues.id AND labels.label = ?)'
+            ).join(' AND ');
+            whereClauses.push(`(${labelChecks})`);
+            whereParams.push(...filters.labels);
+        }
+
+        const whereClause = whereClauses.join(' AND ');
+
+        // Build ORDER BY clause from sorting
+        let orderByClause = '';
+        if (sorting && sorting.length > 0) {
+            const orderByClauses = sorting.map(sort => {
+                // Map column IDs to database columns
+                const columnMap: Record<string, string> = {
+                    'id': 'id',
+                    'title': 'title',
+                    'status': 'status',
+                    'priority': 'priority',
+                    'type': 'issue_type',
+                    'assignee': 'assignee',
+                    'created': 'created_at',
+                    'updated': 'updated_at',
+                    'closed': 'closed_at'
+                };
+                const dbColumn = columnMap[sort.id] || 'updated_at';
+                const direction = sort.dir === 'asc' ? 'ASC' : 'DESC';
+                return `${dbColumn} ${direction}`;
+            });
+            orderByClause = 'ORDER BY ' + orderByClauses.join(', ');
+        } else {
+            // Default sort: updated_at desc
+            orderByClause = 'ORDER BY updated_at DESC';
+        }
+
+        // Get total count (without pagination)
+        const countResult = this.queryAll(`
+            SELECT COUNT(*) as total
+            FROM issues
+            WHERE ${whereClause}
+        `, whereParams) as Array<{ total: number }>;
+        const totalCount = countResult[0]?.total || 0;
+
+        this.output.appendLine(`[BeadsAdapter] Total matching rows: ${totalCount}`);
+
+        // Get paginated results
+        const rows = this.queryAll(`
+            SELECT 
+                id, title, description, status, priority, issue_type as type, assignee,
+                estimated_minutes, created_at, updated_at, closed_at, external_ref,
+                acceptance_criteria, design, notes, due_at, defer_until, pinned,
+                is_template, ephemeral, event_type, event_data, agent_id,
+                agent_metadata, agent_session_id, run_id
+            FROM issues
+            WHERE ${whereClause}
+            ${orderByClause}
+            LIMIT ? OFFSET ?
+        `, [...whereParams, limit, offset]) as any[];
+
+        this.output.appendLine(`[BeadsAdapter] Fetched ${rows.length} rows for current page`);
+
+        // Fetch labels for the paginated results (skip dependencies for table view performance)
+        const ids = rows.map((r: any) => r.id);
+        const labelsMap = new Map<string, string[]>();
+
+        if (ids.length > 0) {
+            // Fetch labels in batches
+            const BATCH_SIZE = 100;
+            for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+                const batch = ids.slice(i, Math.min(i + BATCH_SIZE, ids.length));
+                const placeholders = batch.map(() => '?').join(', ');
+                const labelRows = this.queryAll(`
+                    SELECT issue_id, label
+                    FROM labels
+                    WHERE issue_id IN (${placeholders})
+                `, batch) as Array<{ issue_id: string; label: string }>;
+
+                for (const row of labelRows) {
+                    if (!labelsMap.has(row.issue_id)) {
+                        labelsMap.set(row.issue_id, []);
+                    }
+                    labelsMap.get(row.issue_id)!.push(row.label);
+                }
+            }
+        }
+
+        // Build BoardCard objects
+        const cards: BoardCard[] = rows.map((row: any) => ({
+            id: row.id,
+            title: row.title,
+            description: row.description || '',
+            status: row.status as 'open' | 'in_progress' | 'blocked' | 'closed',
+            priority: row.priority,
+            issue_type: row.type,
+            assignee: row.assignee || undefined,
+            labels: labelsMap.get(row.id) || [],
+            estimated_minutes: row.estimated_minutes || undefined,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            closed_at: row.closed_at || undefined,
+            external_ref: row.external_ref || undefined,
+            acceptance_criteria: row.acceptance_criteria || '',
+            design: row.design || '',
+            notes: row.notes || '',
+            due_at: row.due_at || undefined,
+            defer_until: row.defer_until || undefined,
+            pinned: row.pinned === 1,
+            is_template: row.is_template === 1,
+            ephemeral: row.ephemeral === 1,
+            // Table view doesn't need is_ready/blocked_by_count, but they're required by BoardCard
+            is_ready: false,
+            blocked_by_count: 0,
+            // Event/agent metadata
+            event_kind: row.event_type || undefined,
+            actor: row.agent_id || undefined,
+            target: undefined,
+            payload: row.event_data ? JSON.stringify(row.event_data) : undefined,
+            sender: undefined,
+            mol_type: undefined,
+            role_type: undefined,
+            rig: undefined,
+            agent_state: undefined,
+            last_activity: undefined,
+            hook_bead: undefined,
+            role_bead: undefined,
+            await_type: undefined,
+            await_id: undefined,
+            timeout_ns: undefined,
+            waiters: undefined,
+            // Dependencies: not loaded for table view (performance)
+            parent: undefined,
+            children: undefined,
+            blocked_by: undefined,
+            blocks: undefined,
+            comments: []
+        }));
+
+        this.output.appendLine(`[BeadsAdapter] Built ${cards.length} BoardCard objects`);
+
+        return { cards, totalCount };
+    }
+
   public async createIssue(input: {
     title: string;
     description?: string;

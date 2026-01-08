@@ -27,6 +27,7 @@ type WebMsg =
   | { type: "board.refresh"; requestId: string }
   | { type: "board.loadColumn"; requestId: string; payload: { column: BoardColumnKey; offset: number; limit: number } }
   | { type: "board.loadMore"; requestId: string; payload: { column: BoardColumnKey } }
+  | { type: "table.loadPage"; requestId: string; payload: { filters: any; sorting: Array<{ id: string; dir: 'asc' | 'desc' }>; offset: number; limit: number } }
   | { type: "issue.create"; requestId: string; payload: { title: string; description?: string } }
   | { type: "issue.move"; requestId: string; payload: { id: string; toColumn: BoardColumnKey } }
   | { type: "issue.addToChat"; requestId: string; payload: { text: string } }
@@ -41,6 +42,7 @@ type WebMsg =
 type ExtMsg =
   | { type: "board.data"; requestId: string; payload: BoardData }
   | { type: "board.columnData"; requestId: string; payload: { column: BoardColumnKey; cards: BoardCard[]; offset: number; totalCount: number; hasMore: boolean } }
+  | { type: "table.pageData"; requestId: string; payload: { cards: BoardCard[]; offset: number; totalCount: number; hasMore: boolean } }
   | { type: "mutation.ok"; requestId: string }
   | { type: "mutation.error"; requestId: string; error: string };
 
@@ -533,6 +535,52 @@ export function activate(context: vscode.ExtensionContext) {
       }
     };
 
+    const handleTableLoadPage = async (
+      requestId: string,
+      filters: any,
+      sorting: Array<{ id: string; dir: 'asc' | 'desc' }>,
+      offset: number,
+      limit: number
+    ) => {
+      if (isDisposed) {
+        output.appendLine(`[Extension] Skipping handleTableLoadPage - webview is disposed`);
+        return;
+      }
+      output.appendLine(`[Extension] handleTableLoadPage: offset=${offset}, limit=${limit}, filters=${JSON.stringify(filters)}, sorting=${JSON.stringify(sorting)}`);
+
+      try {
+        // Call adapter's getTableData method
+        const result = await adapter.getTableData(filters, sorting, offset, limit);
+
+        // Validate markdown content in returned cards (defense-in-depth)
+        validateBoardCards(result.cards, output);
+
+        output.appendLine(`[Extension] Loaded ${result.cards.length} cards for table (${offset}-${offset + result.cards.length}/${result.totalCount})`);
+
+        // Send response - check cancellation before posting
+        if (!cancellationToken.cancelled) {
+          post({
+            type: 'table.pageData',
+            requestId,
+            payload: { 
+              cards: result.cards, 
+              offset, 
+              totalCount: result.totalCount,
+              hasMore: (offset + result.cards.length) < result.totalCount
+            }
+          });
+        } else {
+          output.appendLine(`[Extension] Skipped posting table.pageData - operation cancelled`);
+        }
+      } catch (e) {
+        output.appendLine(`[Extension] Error in handleTableLoadPage: ${sanitizeError(e)}`);
+        // Check both disposal flag and cancellation token
+        if (!isDisposed && !cancellationToken.cancelled) {
+          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+        }
+      }
+    };
+
     // Set up message handler BEFORE setting HTML to avoid race condition
     panel.webview.onDidReceiveMessage(async (msg: WebMsg) => {
       output.appendLine(`[Extension] Received message: ${msg?.type} (requestId: ${msg?.requestId})`);
@@ -552,6 +600,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (msg.type === "board.loadMore") {
         const { column } = msg.payload;
         await handleLoadMore(msg.requestId, column);
+        return;
+      }
+
+      if (msg.type === "table.loadPage") {
+        const { filters, sorting, offset, limit } = msg.payload;
+        await handleTableLoadPage(msg.requestId, filters, sorting, offset, limit);
         return;
       }
 

@@ -33,9 +33,14 @@ let columnState = {
 let boardData = null;
 let detailDirty = false;
 
-// Table view pagination state
-let tableState_paginationPage = 0;
-const tableState_rowsPerPage = 100; // Render 100 rows at a time
+// Table view pagination state (server-side)
+let tablePaginationState = {
+    currentPage: 0,
+    pageSize: 100, // Configurable page size
+    totalCount: 0,
+    cards: [],
+    loading: false
+};
 
 // Debounce utility for performance optimization
 function debounce(func, wait) {
@@ -437,7 +442,7 @@ function render() {
     }
 
     // Reset table pagination when filters/sort changes (user likely wants to see results from page 1)
-    tableState_paginationPage = 0;
+    tablePaginationState.currentPage = 0;
 
     if (viewMode === 'table') {
         renderTable();
@@ -766,116 +771,78 @@ function getLoadedCount() {
     return loaded;
 }
 
-// Table view rendering
-function renderTable() {
+// Load table page from server with filters and sorting
+async function loadTablePage(page = null) {
+    if (page !== null) {
+        tablePaginationState.currentPage = page;
+    }
+
+    const offset = tablePaginationState.currentPage * tablePaginationState.pageSize;
+    const limit = tablePaginationState.pageSize;
+
+    // Build filters from current UI state
+    const filters = {};
+    const searchTerm = filterSearch.value.trim();
+    if (searchTerm) filters.search = searchTerm;
+    if (filterPriority.value) filters.priority = filterPriority.value;
+    if (filterType.value) filters.type = filterType.value;
+    if (tableState.filters.status) filters.status = tableState.filters.status;
+    if (tableState.filters.assignee) filters.assignee = tableState.filters.assignee;
+    if (tableState.filters.labels && tableState.filters.labels.length > 0) {
+        filters.labels = tableState.filters.labels;
+    }
+
+    console.log('[Webview] loadTablePage: page', tablePaginationState.currentPage, 'offset', offset, 'limit', limit, 'filters', filters, 'sorting', tableState.sorting);
+
+    tablePaginationState.loading = true;
+    
+    try {
+        const response = await postAsync('table.loadPage', {
+            filters,
+            sorting: tableState.sorting,
+            offset,
+            limit
+        });
+
+        if (response.type === 'table.pageData') {
+            tablePaginationState.cards = response.payload.cards;
+            tablePaginationState.totalCount = response.payload.totalCount;
+            tablePaginationState.loading = false;
+            console.log('[Webview] Loaded table page:', response.payload.cards.length, 'cards, total:', response.payload.totalCount);
+            return true;
+        } else {
+            throw new Error('Unexpected response type: ' + response.type);
+        }
+    } catch (error) {
+        console.error('[Webview] loadTablePage failed:', error);
+        tablePaginationState.loading = false;
+        toast('Failed to load table page: ' + error.message);
+        return false;
+    }
+}
+
+// Table view rendering (async - uses server-side pagination)
+async function renderTable() {
     console.log('[Webview] renderTable() called');
 
-    // Check if any column is loading
-    const isLoading = columns.some(col => {
-        const colState = columnState[col.key];
-        return colState && colState.loading;
-    });
-
-    // Flatten and deduplicate cards from all columns
-    let tableRows = flattenColumnState();
-    console.log('[Webview] Flattened', tableRows.length, 'unique cards');
-
-    // Apply existing filters (search, priority, type) plus table-specific filters
-    const searchTerm = filterSearch.value.toLowerCase().trim();
-    const priorityFilter = filterPriority.value;
-    const typeFilter = filterType.value;
-    const statusFilter = tableState.filters.status;
-    const assigneeFilter = tableState.filters.assignee;
-    const labelsFilter = tableState.filters.labels; // Array of labels to match
-
-    if (searchTerm || priorityFilter || typeFilter || statusFilter || assigneeFilter || labelsFilter) {
-        tableRows = tableRows.filter(card => {
-            // Search filter (title, id, and optionally description)
-            if (searchTerm) {
-                const matchesSearch = 
-                    card.title.toLowerCase().includes(searchTerm) ||
-                    card.id.toLowerCase().includes(searchTerm) ||
-                    (card.description && card.description.toLowerCase().includes(searchTerm));
-                if (!matchesSearch) return false;
-            }
-
-            // Priority filter
-            if (priorityFilter && String(card.priority) !== priorityFilter) {
-                return false;
-            }
-
-            // Type filter
-            if (typeFilter && card.issue_type !== typeFilter) {
-                return false;
-            }
-
-            // Status filter (supports presets and specific statuses)
-            if (statusFilter) {
-                if (statusFilter === 'not_closed') {
-                    if (card.status === 'closed') return false;
-                } else if (statusFilter === 'active') {
-                    if (card.status !== 'in_progress' && card.status !== 'open') return false;
-                } else if (statusFilter === 'blocked') {
-                    if (card.status !== 'blocked') return false;
-                } else if (statusFilter !== 'all') {
-                    // Specific status match
-                    if (card.status !== statusFilter) return false;
-                }
-            }
-
-            // Assignee filter
-            if (assigneeFilter) {
-                if (assigneeFilter === 'unassigned') {
-                    if (card.assignee) return false;
-                } else {
-                    if (card.assignee !== assigneeFilter) return false;
-                }
-            }
-
-            // Labels filter (must have ALL specified labels)
-            if (labelsFilter && labelsFilter.length > 0) {
-                if (!card.labels || card.labels.length === 0) return false;
-                const hasAllLabels = labelsFilter.every(label => 
-                    card.labels.includes(label)
-                );
-                if (!hasAllLabels) return false;
-            }
-
-            return true;
-        });
-        console.log('[Webview] After filtering:', tableRows.length, 'cards');
+    // Load current page from server with filters and sorting
+    const success = await loadTablePage();
+    if (!success) {
+        // Error already displayed by loadTablePage
+        return;
     }
 
-    // Apply sorting (for now, just default to updated_at desc)
-    if (tableState.sorting.length > 0) {
-        // Apply multi-column sorting
-        tableRows.sort((a, b) => {
-            for (const sortSpec of tableState.sorting) {
-                const col = tableColumns.find(c => c.id === sortSpec.id);
-                if (!col || !col.sort) continue;
-                
-                const cmp = col.sort(a, b);
-                if (cmp !== 0) {
-                    return sortSpec.dir === 'desc' ? -cmp : cmp;
-                }
-            }
-            // Fallback to updated_at desc
-            const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-            const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-            return bTime - aTime;
-        });
-    } else {
-        // Default sort: updated_at desc
-        tableRows.sort((a, b) => {
-            const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-            const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-            return bTime - aTime;
-        });
-    }
+    const tableRows = tablePaginationState.cards;
+    const totalCount = tablePaginationState.totalCount;
+    const totalPages = Math.ceil(totalCount / tablePaginationState.pageSize);
+    const currentPage = tablePaginationState.currentPage;
+    const startIdx = currentPage * tablePaginationState.pageSize;
+    const endIdx = Math.min(startIdx + tablePaginationState.pageSize, totalCount);
+
+    console.log('[Webview] Rendering table: page', currentPage + 1, 'of', totalPages, '(', tableRows.length, 'cards)');
 
     // Get visible columns (respecting user preferences)
     let visibleColumns = tableColumns.filter(col => {
-        // Use columnVisibility map if set, otherwise use default visible property
         if (Object.keys(tableState.columnVisibility).length > 0) {
             return tableState.columnVisibility[col.id] !== false;
         }
@@ -889,19 +856,20 @@ function renderTable() {
             .filter(Boolean);
     }
 
-    // Apply pagination: calculate visible rows for current page
-    const totalRows = tableRows.length;
-    const totalPages = Math.ceil(totalRows / tableState_rowsPerPage);
-    const currentPage = Math.min(tableState_paginationPage, totalPages - 1);
-    const startIdx = currentPage * tableState_rowsPerPage;
-    const endIdx = Math.min(startIdx + tableState_rowsPerPage, totalRows);
-    const visibleRows = tableRows.slice(startIdx, endIdx);
-
-    console.log('[Webview] Pagination:', totalRows, 'total rows,', visibleRows.length, 'visible rows on page', currentPage + 1, 'of', totalPages);
-
     // Build table HTML
     let tableHtml = `
         <div class="table-view">
+            <div class="table-controls">
+                <label for="pageSizeSelect">Rows per page:</label>
+                <select id="pageSizeSelect" class="page-size-select">
+                    <option value="25" ${tablePaginationState.pageSize === 25 ? 'selected' : ''}>25</option>
+                    <option value="50" ${tablePaginationState.pageSize === 50 ? 'selected' : ''}>50</option>
+                    <option value="100" ${tablePaginationState.pageSize === 100 ? 'selected' : ''}>100</option>
+                    <option value="250" ${tablePaginationState.pageSize === 250 ? 'selected' : ''}>250</option>
+                    <option value="500" ${tablePaginationState.pageSize === 500 ? 'selected' : ''}>500</option>
+                </select>
+                <span class="pagination-info">Showing ${startIdx + 1}-${endIdx} of ${totalCount} rows</span>
+            </div>
             <div class="table-wrapper">
                 <table class="issues-table">
                     <thead>
@@ -918,8 +886,8 @@ function renderTable() {
                     <tbody>
     `;
 
-    // Render only visible rows for current page
-    for (const card of visibleRows) {
+    // Render all rows (already paginated server-side)
+    for (const card of tableRows) {
         tableHtml += '<tr class="table-row" data-id="' + escapeHtml(card.id) + '">';
         for (const col of visibleColumns) {
             const cellContent = col.render(card);
@@ -937,13 +905,23 @@ function renderTable() {
 
     boardEl.innerHTML = tableHtml;
 
+    // Add page size selector handler
+    const pageSizeSelect = document.getElementById('pageSizeSelect');
+    if (pageSizeSelect) {
+        pageSizeSelect.addEventListener('change', async (e) => {
+            tablePaginationState.pageSize = parseInt(e.target.value);
+            tablePaginationState.currentPage = 0; // Reset to first page
+            await renderTable();
+        });
+    }
+
     // Add pagination controls if there are multiple pages
     if (totalPages > 1) {
         const paginationDiv = document.createElement('div');
         paginationDiv.className = 'table-pagination';
         paginationDiv.innerHTML = `
-            <span class="pagination-info">Showing ${startIdx + 1}-${endIdx} of ${totalRows} rows (Page ${currentPage + 1} of ${totalPages})</span>
             <button class="btn pagination-btn" id="tablePrevPage" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
+            <span class="pagination-info">Page ${currentPage + 1} of ${totalPages}</span>
             <button class="btn pagination-btn" id="tableNextPage" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
         `;
         boardEl.appendChild(paginationDiv);
@@ -953,75 +931,22 @@ function renderTable() {
         const nextBtn = document.getElementById('tableNextPage');
         
         if (prevBtn) {
-            prevBtn.addEventListener('click', () => {
-                if (tableState_paginationPage > 0) {
-                    tableState_paginationPage--;
-                    renderTable();
+            prevBtn.addEventListener('click', async () => {
+                if (tablePaginationState.currentPage > 0) {
+                    await loadTablePage(tablePaginationState.currentPage - 1);
+                    await renderTable();
                 }
             });
         }
         
         if (nextBtn) {
-            nextBtn.addEventListener('click', () => {
-                if (tableState_paginationPage < totalPages - 1) {
-                    tableState_paginationPage++;
-                    renderTable();
+            nextBtn.addEventListener('click', async () => {
+                if (tablePaginationState.currentPage < totalPages - 1) {
+                    await loadTablePage(tablePaginationState.currentPage + 1);
+                    await renderTable();
                 }
             });
         }
-    }
-
-    // Add loading indicator or partial load banner
-    if (isLoading) {
-        const loadingDiv = document.createElement('div');
-        loadingDiv.className = 'table-footer';
-        loadingDiv.innerHTML = `
-            <div class="column-loading">
-                <div class="spinner"></div>
-                <span>Loading more issues...</span>
-            </div>
-        `;
-        boardEl.appendChild(loadingDiv);
-    } else if (hasPartialData()) {
-        const totalCount = getTotalCount();
-        const loadedCount = getLoadedCount();
-        const remaining = totalCount - loadedCount;
-        
-        const banner = document.createElement('div');
-        banner.className = 'table-footer';
-        banner.innerHTML = `
-            Showing ${loadedCount} of ${totalCount} issues (${remaining} remaining).
-            <button class="btn load-more-btn" id="tableLoadMoreBtn" style="margin-left: 12px;">Load More</button>
-        `;
-        boardEl.appendChild(banner);
-        
-        // Add load more handler
-        const loadMoreBtn = document.getElementById('tableLoadMoreBtn');
-        loadMoreBtn.addEventListener('click', async () => {
-            // Load more from all columns that have more data
-            for (const col of columns) {
-                const colState = columnState[col.key];
-                if (colState && colState.hasMore && !colState.loading) {
-                    try {
-                        colState.loading = true;
-                        render(); // Re-render to show loading state
-                        await postAsync('board.loadMore', { column: col.key });
-                    } catch (error) {
-                        console.error('[Webview] Load More failed for', col.key, ':', error);
-                        toast(`Failed to load more: ${error.message}`);
-                        colState.loading = false;
-                    }
-                }
-            }
-        });
-    } catch (error) {
-                        console.error('[Webview] Load More failed for', col.key, ':', error);
-                        toast(`Failed to load more: ${error.message}`);
-                        colState.loading = false;
-                    }
-                }
-            }
-        });
     }
 
     // Add click handlers to table rows
@@ -1046,11 +971,11 @@ function renderTable() {
 
     // Add keyboard navigation for table rows
     for (const row of rows) {
-        row.setAttribute('tabindex', '0'); // Make rows focusable
+        row.setAttribute('tabindex', '0');
         row.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                row.click(); // Trigger the click handler
+                row.click();
             }
         });
     }
@@ -1060,7 +985,7 @@ function renderTable() {
     for (const cell of idCells) {
         cell.style.cursor = 'pointer';
         cell.addEventListener('click', (e) => {
-            e.stopPropagation(); // Prevent row click
+            e.stopPropagation();
             const fullId = cell.dataset.fullId;
             post('issue.copyToClipboard', { text: fullId });
             toast(`Copied: ${fullId.slice(-8)}`);
@@ -1110,6 +1035,8 @@ function handleColumnSort(columnId, isShiftKey) {
     }
     
     console.log('[Webview] New sorting:', tableState.sorting);
+    // Reset to first page when sorting changes (for table view server-side pagination)
+    tablePaginationState.currentPage = 0;
     saveState();
     render();
 }
