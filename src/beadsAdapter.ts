@@ -15,6 +15,7 @@ export class BeadsAdapter {
   private saveTimeout: NodeJS.Timeout | null = null;
   private isDirty = false;
   private isSaving = false;
+  private isReloading = false; // Prevent concurrent mutations during database reload
   private boardCache: any | null = null;
   private cacheTimestamp = 0;
   private lastSaveTime = 0;
@@ -221,16 +222,18 @@ export class BeadsAdapter {
   }
 
   public async reloadDatabase(): Promise<void> {
-    // CRITICAL: Flush any pending saves before reloading to prevent data loss
-    await this.flushPendingSaves();
-
-    if (!this.dbPath) {
-      this.output.appendLine('[BeadsAdapter] reloadDatabase: No database path set, calling ensureConnected');
-      await this.ensureConnected();
-      return;
-    }
-
+    // Set reload lock to prevent concurrent mutations
+    this.isReloading = true;
     try {
+      // CRITICAL: Flush any pending saves before reloading to prevent data loss
+      await this.flushPendingSaves();
+
+      if (!this.dbPath) {
+        this.output.appendLine('[BeadsAdapter] reloadDatabase: No database path set, calling ensureConnected');
+        await this.ensureConnected();
+        return;
+      }
+
       this.output.appendLine(`[BeadsAdapter] Reloading database from ${this.dbPath}`);
 
       // Close current database if exists
@@ -272,6 +275,20 @@ export class BeadsAdapter {
       this.db = null;
       this.dbPath = null;
       await this.ensureConnected();
+    } finally {
+      // Always clear reload lock
+      this.isReloading = false;
+    }
+  }
+
+  /**
+   * Wait for any ongoing database reload to complete before proceeding with mutations.
+   * This prevents the race condition where mutations occur during reload.
+   */
+  private async waitForReloadComplete(): Promise<void> {
+    while (this.isReloading) {
+      this.output.appendLine('[BeadsAdapter] Waiting for database reload to complete...');
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
   }
 
@@ -1055,6 +1072,8 @@ export class BeadsAdapter {
     due_at?: string | null;
     defer_until?: string | null;
   }): Promise<{ id: string }> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
     if (!this.db) throw new Error('Failed to connect to database');
     const db = this.db;
@@ -1094,6 +1113,8 @@ export class BeadsAdapter {
   }
 
   public async setIssueStatus(id: string, toStatus: IssueStatus): Promise<void> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
     if (!this.db) throw new Error('Failed to connect to database');
     const db = this.db;
@@ -1136,6 +1157,8 @@ export class BeadsAdapter {
     defer_until?: string | null;
     status?: string;
   }): Promise<void> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
 
     const fields: string[] = [];
@@ -1184,6 +1207,8 @@ export class BeadsAdapter {
   }
 
   public async addComment(issueId: string, text: string, author: string): Promise<void> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
     
     this.runQuery(`
@@ -1193,16 +1218,22 @@ export class BeadsAdapter {
   }
 
   public async addLabel(issueId: string, label: string): Promise<void> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
     this.runQuery("INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?, ?)", [issueId, label]);
   }
 
   public async removeLabel(issueId: string, label: string): Promise<void> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
     this.runQuery("DELETE FROM labels WHERE issue_id = ? AND label = ?", [issueId, label]);
   }
 
   public async addDependency(issueId: string, dependsOnId: string, type: 'parent-child' | 'blocks' = 'blocks'): Promise<void> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
     this.runQuery(`
       INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_by)
@@ -1211,6 +1242,8 @@ export class BeadsAdapter {
   }
 
   public async removeDependency(issueId: string, dependsOnId: string): Promise<void> {
+    // Wait for any ongoing reload to complete
+    await this.waitForReloadComplete();
     if (!this.db) await this.ensureConnected();
     this.runQuery("DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?", [issueId, dependsOnId]);
   }

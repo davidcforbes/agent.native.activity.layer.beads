@@ -4,6 +4,7 @@ import { DaemonBeadsAdapter } from "./daemonBeadsAdapter";
 import { DaemonManager } from "./daemonManager";
 import { getWebviewHtml } from "./webview";
 import { sanitizeErrorWithContext as sanitizeError } from "./sanitizeError";
+import { validateMarkdownFields, validateCommentContent } from "./markdownValidator";
 import {
   BoardData,
   BoardCard,
@@ -49,6 +50,22 @@ const MAX_CLIPBOARD_TEXT = 100_000; // 100KB for clipboard
 
 // Sanitize error messages to prevent leaking implementation details
 // sanitizeError is now imported from ./sanitizeError
+
+/**
+ * Validates markdown content in all cards before sending to webview.
+ * Logs warnings for suspicious content but does not block sending.
+ * This is a defense-in-depth measure - webview still uses DOMPurify.
+ */
+function validateBoardCards(cards: BoardCard[], output: vscode.OutputChannel): void {
+  for (const card of cards) {
+    validateMarkdownFields({
+      description: card.description,
+      acceptance_criteria: card.acceptance_criteria,
+      design: card.design,
+      notes: card.notes
+    }, output);
+  }
+}
 
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("Beads Kanban");
@@ -389,6 +406,16 @@ export function activate(context: vscode.ExtensionContext) {
           const data = await adapter.getBoard();
           data.columnData = columnDataMap;
 
+          // Validate markdown content in all cards (defense-in-depth)
+          validateBoardCards(data.cards, output);
+          // Also validate cards in columnData
+          for (const column of Object.keys(columnDataMap)) {
+            const columnCards = columnDataMap[column as BoardColumnKey]?.cards;
+            if (columnCards && columnCards.length > 0) {
+              validateBoardCards(columnCards, output);
+            }
+          }
+
           output.appendLine(`[Extension] Sending incremental board data with columnData`);
           // Check cancellation before posting to prevent race with disposal
           if (!cancellationToken.cancelled) {
@@ -401,6 +428,9 @@ export function activate(context: vscode.ExtensionContext) {
           output.appendLine(`[Extension] Adapter does not support incremental loading, using legacy getBoard()`);
           const data = await adapter.getBoard();
           output.appendLine(`[Extension] Got board data: ${data.cards.length} cards`);
+          
+          // Validate markdown content in all cards (defense-in-depth)
+          validateBoardCards(data.cards, output);
           // Check cancellation before posting to prevent race with disposal
           if (!cancellationToken.cancelled) {
             post({ type: "board.data", requestId, payload: data });
@@ -537,6 +567,16 @@ export function activate(context: vscode.ExtensionContext) {
             post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${validation.error.message}` });
             return;
           }
+          
+          // Validate markdown content (defense-in-depth)
+          const createValid = validateMarkdownFields({
+            description: validation.data.description
+          }, output);
+          if (!createValid) {
+            output.appendLine(`[Extension] Warning: Suspicious content detected in new issue`);
+            // Log warning but allow creation (defense-in-depth, not blocking)
+          }
+          
           await adapter.createIssue(validation.data);
           post({ type: "mutation.ok", requestId: msg.requestId });
           // push refreshed board
@@ -587,6 +627,19 @@ export function activate(context: vscode.ExtensionContext) {
             post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${validation.error.message}` });
             return;
           }
+          
+          // Validate markdown content in updates (defense-in-depth)
+          const updateValid = validateMarkdownFields({
+            description: validation.data.updates.description,
+            acceptance_criteria: validation.data.updates.acceptance_criteria,
+            design: validation.data.updates.design,
+            notes: validation.data.updates.notes
+          }, output);
+          if (!updateValid) {
+            output.appendLine(`[Extension] Warning: Suspicious content detected in issue update`);
+            // Log warning but allow update (defense-in-depth, not blocking)
+          }
+          
           await adapter.updateIssue(validation.data.id, validation.data.updates);
           post({ type: "mutation.ok", requestId: msg.requestId });
           await sendBoard(msg.requestId);
@@ -607,6 +660,14 @@ export function activate(context: vscode.ExtensionContext) {
               post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${validation.error.message}` });
               return;
             }
+            
+            // Validate comment markdown content (defense-in-depth)
+            const commentValidation = validateCommentContent(validation.data.text, output);
+            if (!commentValidation.isValid) {
+              output.appendLine(`[Extension] Warning: Suspicious content detected in comment`);
+              // Log warning but allow comment (defense-in-depth, not blocking)
+            }
+            
             await adapter.addComment(validation.data.id, validation.data.text, validation.data.author);
             post({ type: "mutation.ok", requestId: msg.requestId });
             await sendBoard(msg.requestId);
