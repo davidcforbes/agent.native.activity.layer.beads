@@ -15,7 +15,9 @@ import {
   DependencySchema,
   SetStatusSchema,
   BoardLoadColumnSchema,
-  BoardLoadMoreSchema
+  BoardLoadMoreSchema,
+  ColumnDataMap,
+  ColumnData
 } from "./types";
 
 type WebMsg =
@@ -110,7 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Daemon management setup
   if (ws) {
-    const daemonManager = new DaemonManager(ws.uri.fsPath);
+    const daemonManager = new DaemonManager(ws.uri.fsPath, output);
 
     // Create status bar item
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -330,9 +332,101 @@ export function activate(context: vscode.ExtensionContext) {
       output.appendLine(`[Extension] sendBoard called with requestId: ${requestId}`);
       initialLoadSent = true; // Mark that we've sent board data
       try {
-        const data = await adapter.getBoard();
-        output.appendLine(`[Extension] Got board data: ${data.cards.length} cards`);
-        post({ type: "board.data", requestId, payload: data });
+        // Read configuration settings for incremental loading
+        const config = vscode.workspace.getConfiguration('beadsKanban');
+        const initialLoadLimit = config.get<number>('initialLoadLimit', 100);
+        const preloadClosedColumn = config.get<boolean>('preloadClosedColumn', false);
+
+        output.appendLine(`[Extension] Using initialLoadLimit: ${initialLoadLimit}, preloadClosedColumn: ${preloadClosedColumn}`);
+
+        // Check if adapter supports incremental loading
+        const supportsIncremental = typeof adapter.getColumnData === 'function' && typeof adapter.getColumnCount === 'function';
+
+        if (supportsIncremental) {
+          // Use incremental loading approach
+          output.appendLine(`[Extension] Using incremental loading for initial board data`);
+
+          const columnsToPreload: BoardColumnKey[] = ['ready', 'in_progress', 'blocked'];
+          if (preloadClosedColumn) {
+            columnsToPreload.push('closed');
+          }
+
+          // Load initial data for each column using proper types
+          // Initialize all columns to satisfy ColumnDataMap type
+          const columnDataMap = {} as ColumnDataMap;
+
+          // Initialize 'open' column with empty data (not displayed in UI)
+          const openTotalCount = await adapter.getColumnCount('open');
+          columnDataMap['open'] = {
+            cards: [],
+            offset: 0,
+            limit: 0,
+            totalCount: openTotalCount,
+            hasMore: openTotalCount > 0
+          };
+
+          for (const column of columnsToPreload) {
+            try {
+              const cards = await adapter.getColumnData(column, 0, initialLoadLimit);
+              const totalCount = await adapter.getColumnCount(column);
+              const hasMore = initialLoadLimit < totalCount;
+
+              const columnData: ColumnData = {
+                cards,
+                offset: 0,
+                limit: initialLoadLimit,
+                totalCount,
+                hasMore
+              };
+              columnDataMap[column] = columnData;
+
+              // Track loaded range
+              const ranges = loadedRanges.get(column) || [];
+              ranges.push({ offset: 0, limit: initialLoadLimit });
+              loadedRanges.set(column, ranges);
+
+              output.appendLine(`[Extension] Loaded ${cards.length}/${totalCount} cards for column ${column}`);
+            } catch (columnError) {
+              output.appendLine(`[Extension] Error loading column ${column}: ${sanitizeError(columnError)}`);
+              // Initialize with empty data on error
+              const emptyColumnData: ColumnData = {
+                cards: [],
+                offset: 0,
+                limit: initialLoadLimit,
+                totalCount: 0,
+                hasMore: false
+              };
+              columnDataMap[column] = emptyColumnData;
+            }
+          }
+
+          // Initialize closed column with empty data if not preloaded
+          if (!preloadClosedColumn) {
+            const totalCount = await adapter.getColumnCount('closed');
+            const closedColumnData: ColumnData = {
+              cards: [],
+              offset: 0,
+              limit: 0,
+              totalCount,
+              hasMore: totalCount > 0
+            };
+            columnDataMap['closed'] = closedColumnData;
+            output.appendLine(`[Extension] Closed column not preloaded (${totalCount} total cards available)`);
+          }
+
+          const data = await adapter.getBoard();
+          data.columnData = columnDataMap;
+
+          output.appendLine(`[Extension] Sending incremental board data with columnData`);
+          post({ type: "board.data", requestId, payload: data });
+        } else {
+          // Fallback to legacy full load
+          output.appendLine(`[Extension] Adapter does not support incremental loading, using legacy getBoard()`);
+          const data = await adapter.getBoard();
+          output.appendLine(`[Extension] Got board data: ${data.cards.length} cards`);
+          post({ type: "board.data", requestId, payload: data });
+        }
+
         output.appendLine(`[Extension] Posted board.data message`);
       } catch (e) {
         output.appendLine(`[Extension] Error in sendBoard: ${sanitizeError(e)}`);

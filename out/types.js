@@ -1,9 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DependencySchema = exports.LabelSchema = exports.CommentAddSchema = exports.SetStatusSchema = exports.IssueCreateSchema = exports.IssueUpdateSchema = void 0;
+exports.BoardLoadMoreSchema = exports.BoardLoadColumnSchema = exports.DependencySchema = exports.LabelSchema = exports.CommentAddSchema = exports.SetStatusSchema = exports.IssueCreateSchema = exports.IssueUpdateSchema = void 0;
 const zod_1 = require("zod");
 // Zod validation schemas for runtime message validation
 const IssueIdSchema = zod_1.z.string().min(1).max(200);
+const BoardColumnKeySchema = zod_1.z.enum(['ready', 'open', 'in_progress', 'blocked', 'closed']);
 exports.IssueUpdateSchema = zod_1.z.object({
     id: IssueIdSchema,
     updates: zod_1.z.object({
@@ -54,4 +55,13 @@ exports.DependencySchema = zod_1.z.object({
     id: IssueIdSchema,
     otherId: IssueIdSchema,
     type: zod_1.z.enum(['blocks', 'parent-child']).optional()
+});
+// Schemas for incremental loading messages
+exports.BoardLoadColumnSchema = zod_1.z.object({
+    column: BoardColumnKeySchema,
+    offset: zod_1.z.number().int().min(0),
+    limit: zod_1.z.number().int().min(1).max(500)
+});
+exports.BoardLoadMoreSchema = zod_1.z.object({
+    column: BoardColumnKeySchema
 });

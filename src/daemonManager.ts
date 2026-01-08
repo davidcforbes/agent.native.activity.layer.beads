@@ -56,8 +56,9 @@ export interface DaemonInfo {
 
 export class DaemonManager {
   private workspaceRoot: string;
+  private logger?: { appendLine: (value: string) => void };
 
-  constructor(workspaceRoot: string) {
+  constructor(workspaceRoot: string, logger?: { appendLine: (value: string) => void }) {
     // Validate and normalize workspace path to prevent command injection
     if (!workspaceRoot || typeof workspaceRoot !== 'string') {
       throw new Error('Invalid workspace root: must be a non-empty string');
@@ -86,6 +87,22 @@ export class DaemonManager {
     }
     
     this.workspaceRoot = normalized;
+    this.logger = logger;
+  }
+
+  private logSpawnError(args: string[], error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const command = `bd ${args.join(' ')}`;
+    const logLine = `[DaemonManager] ${command} failed: ${message}`;
+
+    if (this.logger) {
+      this.logger.appendLine(logLine);
+      this.logger.appendLine(`[DaemonManager] CWD: ${this.workspaceRoot}`);
+      this.logger.appendLine(`[DaemonManager] PATH: ${process.env.PATH ?? ''}`);
+      this.logger.appendLine(`[DaemonManager] PATHEXT: ${process.env.PATHEXT ?? ''}`);
+    } else {
+      console.error(logLine);
+    }
   }
 
   /**
@@ -109,6 +126,7 @@ export class DaemonManager {
         version: info.daemon_version
       };
     } catch (error) {
+      this.logSpawnError(['info', '--json'], error);
       return {
         running: false,
         healthy: false,
@@ -139,7 +157,7 @@ export class DaemonManager {
 
       return [];
     } catch (error) {
-      console.error('Failed to list daemons:', error);
+      this.logSpawnError(['daemons', 'list', '--json'], error);
       return [];
     }
   }
@@ -173,6 +191,7 @@ export class DaemonManager {
         issues
       };
     } catch (error) {
+      this.logSpawnError(['daemons', 'health', '--json'], error);
       return {
         healthy: false,
         issues: [error instanceof Error ? error.message : 'Health check failed']
@@ -187,18 +206,33 @@ export class DaemonManager {
    * Start the daemon for this workspace
    */
   async start(): Promise<void> {
-    await spawnAsync('bd', ['daemon', '--start'], this.workspaceRoot);
+    try {
+      await spawnAsync('bd', ['daemon', '--start'], this.workspaceRoot);
+    } catch (error) {
+      this.logSpawnError(['daemon', '--start'], error);
+      throw error;
+    }
   }
 
   async restart(): Promise<void> {
-    await spawnAsync('bd', ['daemons', 'restart', '.'], this.workspaceRoot);
+    try {
+      await spawnAsync('bd', ['daemons', 'restart', '.'], this.workspaceRoot);
+    } catch (error) {
+      this.logSpawnError(['daemons', 'restart', '.'], error);
+      throw error;
+    }
   }
 
   /**
    * Stop the daemon for this workspace
    */
   async stop(): Promise<void> {
-    await spawnAsync('bd', ['daemons', 'stop', '.'], this.workspaceRoot);
+    try {
+      await spawnAsync('bd', ['daemons', 'stop', '.'], this.workspaceRoot);
+    } catch (error) {
+      this.logSpawnError(['daemons', 'stop', '.'], error);
+      throw error;
+    }
   }
 
   /**
@@ -211,6 +245,7 @@ export class DaemonManager {
       const { stdout } = await spawnAsync('bd', ['daemons', 'logs', '.', '-n', String(safeLines)], this.workspaceRoot);
       return stdout;
     } catch (error) {
+      this.logSpawnError(['daemons', 'logs', '.', '-n', String(lines)], error);
       return error instanceof Error ? error.message : 'Failed to get logs';
     }
   }

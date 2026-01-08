@@ -55,6 +55,7 @@ class DaemonBeadsAdapter {
      */
     async execBd(args) {
         return new Promise((resolve, reject) => {
+            const command = `bd ${args.join(' ')}`;
             const child = (0, child_process_1.spawn)('bd', args, {
                 cwd: this.workspaceRoot,
                 shell: false
@@ -69,6 +70,9 @@ class DaemonBeadsAdapter {
             });
             child.on('error', (error) => {
                 this.output.appendLine(`[DaemonBeadsAdapter] Command error: ${error.message}`);
+                this.output.appendLine(`[DaemonBeadsAdapter] Command context: ${command} (cwd: ${this.workspaceRoot})`);
+                this.output.appendLine(`[DaemonBeadsAdapter] PATH: ${process.env.PATH ?? ''}`);
+                this.output.appendLine(`[DaemonBeadsAdapter] PATHEXT: ${process.env.PATHEXT ?? ''}`);
                 reject(error);
             });
             child.on('close', (code) => {
@@ -92,6 +96,7 @@ class DaemonBeadsAdapter {
                     }
                 }
                 else {
+                    this.output.appendLine(`[DaemonBeadsAdapter] Command context: ${command} (cwd: ${this.workspaceRoot})`);
                     this.output.appendLine(`[DaemonBeadsAdapter] Command failed (exit ${code}): ${stderr || stdout}`);
                     reject(new Error(`bd command failed with exit code ${code}: ${stderr || stdout}`));
                 }

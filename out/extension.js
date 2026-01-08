@@ -100,7 +100,7 @@ function activate(context) {
     let stopDaemonPolling;
     // Daemon management setup
     if (ws) {
-        const daemonManager = new daemonManager_1.DaemonManager(ws.uri.fsPath);
+        const daemonManager = new daemonManager_1.DaemonManager(ws.uri.fsPath, output);
         // Create status bar item
         const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
         statusBarItem.text = "$(sync~spin) Beads Daemon";
@@ -274,6 +274,13 @@ function activate(context) {
             // Track disposal state and initial load
             let isDisposed = false;
             let initialLoadSent = false;
+            // Track loaded ranges per column for incremental loading
+            const loadedRanges = new Map();
+            // Initialize with empty arrays for each column
+            loadedRanges.set('ready', []);
+            loadedRanges.set('in_progress', []);
+            loadedRanges.set('blocked', []);
+            loadedRanges.set('closed', []);
             const post = (msg) => {
                 if (isDisposed) {
                     output.appendLine(`[Extension] Attempted to post to disposed webview: ${msg.type}`);
@@ -295,13 +302,158 @@ function activate(context) {
                 output.appendLine(`[Extension] sendBoard called with requestId: ${requestId}`);
                 initialLoadSent = true; // Mark that we've sent board data
                 try {
-                    const data = await adapter.getBoard();
-                    output.appendLine(`[Extension] Got board data: ${data.cards.length} cards`);
-                    post({ type: "board.data", requestId, payload: data });
+                    // Read configuration settings for incremental loading
+                    const config = vscode.workspace.getConfiguration('beadsKanban');
+                    const initialLoadLimit = config.get('initialLoadLimit', 100);
+                    const preloadClosedColumn = config.get('preloadClosedColumn', false);
+                    output.appendLine(`[Extension] Using initialLoadLimit: ${initialLoadLimit}, preloadClosedColumn: ${preloadClosedColumn}`);
+                    // Check if adapter supports incremental loading
+                    const supportsIncremental = typeof adapter.getColumnData === 'function' && typeof adapter.getColumnCount === 'function';
+                    if (supportsIncremental) {
+                        // Use incremental loading approach
+                        output.appendLine(`[Extension] Using incremental loading for initial board data`);
+                        const columnsToPreload = ['ready', 'in_progress', 'blocked'];
+                        if (preloadClosedColumn) {
+                            columnsToPreload.push('closed');
+                        }
+                        // Load initial data for each column using proper types
+                        // Initialize all columns to satisfy ColumnDataMap type
+                        const columnDataMap = {};
+                        // Initialize 'open' column with empty data (not displayed in UI)
+                        const openTotalCount = await adapter.getColumnCount('open');
+                        columnDataMap['open'] = {
+                            cards: [],
+                            offset: 0,
+                            limit: 0,
+                            totalCount: openTotalCount,
+                            hasMore: openTotalCount > 0
+                        };
+                        for (const column of columnsToPreload) {
+                            try {
+                                const cards = await adapter.getColumnData(column, 0, initialLoadLimit);
+                                const totalCount = await adapter.getColumnCount(column);
+                                const hasMore = initialLoadLimit < totalCount;
+                                const columnData = {
+                                    cards,
+                                    offset: 0,
+                                    limit: initialLoadLimit,
+                                    totalCount,
+                                    hasMore
+                                };
+                                columnDataMap[column] = columnData;
+                                // Track loaded range
+                                const ranges = loadedRanges.get(column) || [];
+                                ranges.push({ offset: 0, limit: initialLoadLimit });
+                                loadedRanges.set(column, ranges);
+                                output.appendLine(`[Extension] Loaded ${cards.length}/${totalCount} cards for column ${column}`);
+                            }
+                            catch (columnError) {
+                                output.appendLine(`[Extension] Error loading column ${column}: ${sanitizeError(columnError)}`);
+                                // Initialize with empty data on error
+                                const emptyColumnData = {
+                                    cards: [],
+                                    offset: 0,
+                                    limit: initialLoadLimit,
+                                    totalCount: 0,
+                                    hasMore: false
+                                };
+                                columnDataMap[column] = emptyColumnData;
+                            }
+                        }
+                        // Initialize closed column with empty data if not preloaded
+                        if (!preloadClosedColumn) {
+                            const totalCount = await adapter.getColumnCount('closed');
+                            const closedColumnData = {
+                                cards: [],
+                                offset: 0,
+                                limit: 0,
+                                totalCount,
+                                hasMore: totalCount > 0
+                            };
+                            columnDataMap['closed'] = closedColumnData;
+                            output.appendLine(`[Extension] Closed column not preloaded (${totalCount} total cards available)`);
+                        }
+                        const data = await adapter.getBoard();
+                        data.columnData = columnDataMap;
+                        output.appendLine(`[Extension] Sending incremental board data with columnData`);
+                        post({ type: "board.data", requestId, payload: data });
+                    }
+                    else {
+                        // Fallback to legacy full load
+                        output.appendLine(`[Extension] Adapter does not support incremental loading, using legacy getBoard()`);
+                        const data = await adapter.getBoard();
+                        output.appendLine(`[Extension] Got board data: ${data.cards.length} cards`);
+                        post({ type: "board.data", requestId, payload: data });
+                    }
                     output.appendLine(`[Extension] Posted board.data message`);
                 }
                 catch (e) {
                     output.appendLine(`[Extension] Error in sendBoard: ${sanitizeError(e)}`);
+                    if (!isDisposed) {
+                        post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+                    }
+                }
+            };
+            const handleLoadColumn = async (requestId, column, offset, limit) => {
+                if (isDisposed) {
+                    output.appendLine(`[Extension] Skipping handleLoadColumn - webview is disposed`);
+                    return;
+                }
+                output.appendLine(`[Extension] handleLoadColumn: column=${column}, offset=${offset}, limit=${limit}`);
+                try {
+                    // Validate the request
+                    const validation = types_1.BoardLoadColumnSchema.safeParse({ column, offset, limit });
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${validation.error.message}` });
+                        return;
+                    }
+                    // Load the column data
+                    const cards = await adapter.getColumnData(column, offset, limit);
+                    const totalCount = await adapter.getColumnCount(column);
+                    const hasMore = (offset + cards.length) < totalCount;
+                    // Track loaded range
+                    const ranges = loadedRanges.get(column) || [];
+                    ranges.push({ offset, limit });
+                    loadedRanges.set(column, ranges);
+                    output.appendLine(`[Extension] Loaded ${cards.length} cards for column ${column} (${offset}-${offset + cards.length}/${totalCount})`);
+                    // Send response
+                    post({
+                        type: 'board.columnData',
+                        requestId,
+                        payload: { column, cards, offset, totalCount, hasMore }
+                    });
+                }
+                catch (e) {
+                    output.appendLine(`[Extension] Error in handleLoadColumn: ${sanitizeError(e)}`);
+                    if (!isDisposed) {
+                        post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+                    }
+                }
+            };
+            const handleLoadMore = async (requestId, column) => {
+                if (isDisposed) {
+                    output.appendLine(`[Extension] Skipping handleLoadMore - webview is disposed`);
+                    return;
+                }
+                output.appendLine(`[Extension] handleLoadMore: column=${column}`);
+                try {
+                    // Validate the request
+                    const validation = types_1.BoardLoadMoreSchema.safeParse({ column });
+                    if (!validation.success) {
+                        post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${validation.error.message}` });
+                        return;
+                    }
+                    // Calculate next offset from loadedRanges
+                    const ranges = loadedRanges.get(column) || [];
+                    const nextOffset = ranges.reduce((max, r) => Math.max(max, r.offset + r.limit), 0);
+                    // Use configured pageSize
+                    const pageSize = vscode.workspace.getConfiguration('beadsKanban').get('pageSize', 50);
+                    output.appendLine(`[Extension] Loading more for column ${column} from offset ${nextOffset} with pageSize ${pageSize}`);
+                    // Delegate to handleLoadColumn logic
+                    await handleLoadColumn(requestId, column, nextOffset, pageSize);
+                }
+                catch (e) {
+                    output.appendLine(`[Extension] Error in handleLoadMore: ${sanitizeError(e)}`);
                     if (!isDisposed) {
                         post({ type: "mutation.error", requestId, error: sanitizeError(e) });
                     }
@@ -314,6 +466,16 @@ function activate(context) {
                     return;
                 if (msg.type === "board.load" || msg.type === "board.refresh") {
                     sendBoard(msg.requestId);
+                    return;
+                }
+                if (msg.type === "board.loadColumn") {
+                    const { column, offset, limit } = msg.payload;
+                    await handleLoadColumn(msg.requestId, column, offset, limit);
+                    return;
+                }
+                if (msg.type === "board.loadMore") {
+                    const { column } = msg.payload;
+                    await handleLoadMore(msg.requestId, column);
                     return;
                 }
                 if (readOnly) {
@@ -518,6 +680,8 @@ function activate(context) {
                     catch (e) {
                         // Webview already disposed, ignore
                     }
+                    // Clear loaded ranges tracking
+                    loadedRanges.clear();
                     if (refreshTimeout) {
                         clearTimeout(refreshTimeout);
                     }

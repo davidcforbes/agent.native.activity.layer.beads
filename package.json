@@ -48,7 +48,32 @@
           "default": 1000,
           "minimum": 100,
           "maximum": 50000,
-          "description": "Maximum number of issues to load into the Kanban board. Lower values improve performance with large repositories."
+          "description": "⚠️ DEPRECATED: Use beadsKanban.initialLoadLimit instead. Maximum number of issues to load into the Kanban board. This setting is kept for backward compatibility but will be removed in a future version.",
+          "deprecationMessage": "Use beadsKanban.initialLoadLimit and beadsKanban.pageSize instead for better control over incremental loading."
+        },
+        "beadsKanban.initialLoadLimit": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 1000,
+          "description": "Number of issues to load per column on initial board load. Lower values improve initial load time for large databases."
+        },
+        "beadsKanban.pageSize": {
+          "type": "number",
+          "default": 50,
+          "minimum": 10,
+          "maximum": 500,
+          "description": "Number of issues to load when clicking 'Load More'. Adjust based on your network speed and database size."
+        },
+        "beadsKanban.preloadClosedColumn": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, load closed issues on initial board load. May slow down initial load for databases with many closed issues."
+        },
+        "beadsKanban.autoLoadOnScroll": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically load more issues when scrolling near the bottom of a column. If false, users must click 'Load More' buttons."
         },
         "beadsKanban.issuePrefix": {
           "type": "string",
