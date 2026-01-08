@@ -16,8 +16,6 @@ export class BeadsAdapter {
   private isDirty = false;
   private isSaving = false;
   private isReloading = false; // Prevent concurrent mutations during database reload
-  private boardCache: any | null = null;
-  private cacheTimestamp = 0;
   private lastSaveTime = 0;
   private lastKnownMtime = 0; // Track file modification time to detect external changes
 
@@ -260,10 +258,6 @@ export class BeadsAdapter {
 
       this.db = db;
 
-      // Clear cache to force fresh data on next getBoard()
-      this.boardCache = null;
-      this.cacheTimestamp = 0;
-
       // Update mtime tracking to prevent unnecessary reloads
       const stats = await fsPromises.stat(this.dbPath);
       this.lastKnownMtime = stats.mtimeMs;
@@ -346,9 +340,8 @@ export class BeadsAdapter {
         this.db = null;
       }
 
-      // Clear cache - pending changes were already flushed
+      // Clear pending changes flag - changes were already flushed
       this.isDirty = false;
-      this.boardCache = null;
 
       // Initialize SQL.js
       const SQL = await initSqlJs({
@@ -376,12 +369,6 @@ export class BeadsAdapter {
   }
 
   public async getBoard(): Promise<BoardData> {
-    // Check cache (valid for 1 second to reduce DB queries during rapid operations)
-    const now = Date.now();
-    if (this.boardCache && (now - this.cacheTimestamp) < 1000) {
-      return this.boardCache;
-    }
-
     if (!this.db) await this.ensureConnected();
     if (!this.db) throw new Error('Failed to connect to database');
 
@@ -650,10 +637,6 @@ export class BeadsAdapter {
     ];
 
     const boardData = { columns, cards };
-    
-    // Update cache
-    this.boardCache = boardData;
-    this.cacheTimestamp = Date.now();
     
     return boardData;
   }
@@ -1625,10 +1608,6 @@ export class BeadsAdapter {
       // If you need to use db.prepare() manually in the future, you MUST call stmt.free()
       this.db.run(sql, params);
       this.isDirty = true;
-      
-      // Invalidate cache on mutation
-      this.boardCache = null;
-      this.cacheTimestamp = 0;
       
       this.scheduleSave();
   }

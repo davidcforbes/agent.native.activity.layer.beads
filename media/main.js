@@ -1117,6 +1117,57 @@ filterPriority.addEventListener("change", render); // Immediate for dropdown
 filterType.addEventListener("change", render); // Immediate for dropdown
 filterSearch.addEventListener("input", debouncedRender); // Debounced for text input
 
+// Keyboard shortcuts
+document.addEventListener("keydown", (e) => {
+    // Detect platform-specific modifier key
+    const modKey = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
+    
+    // Ignore shortcuts when typing in input fields (except Escape)
+    const isTyping = e.target.tagName === 'INPUT' || 
+                     e.target.tagName === 'TEXTAREA' || 
+                     e.target.isContentEditable;
+    
+    // Escape: Close detail dialog
+    if (e.key === 'Escape' && detDialog.open) {
+        e.preventDefault();
+        requestDetailClose();
+        return;
+    }
+    
+    // Don't trigger other shortcuts while typing (unless it's Escape)
+    if (isTyping && e.key !== 'Escape') {
+        // Allow Ctrl/Cmd+F even in input fields to focus search
+        if (modKey && e.key.toLowerCase() === 'f') {
+            // Continue to handler below
+        } else {
+            return;
+        }
+    }
+    
+    // Ctrl/Cmd+R: Refresh board
+    if (modKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        post("board.refresh");
+        toast("Refreshing board...");
+        return;
+    }
+    
+    // Ctrl/Cmd+N: New issue
+    if (modKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        newBtn.click();
+        return;
+    }
+    
+    // Ctrl/Cmd+F: Focus search
+    if (modKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        filterSearch.focus();
+        filterSearch.select();
+        return;
+    }
+});
+
 window.addEventListener("message", (event) => {
     console.log('[Webview] Received message event:', event);
     console.log('[Webview] Message data:', event.data);

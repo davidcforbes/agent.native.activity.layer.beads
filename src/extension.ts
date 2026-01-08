@@ -817,12 +817,19 @@ export function activate(context: vscode.ExtensionContext) {
         new vscode.RelativePattern(ws, ".beads/**/*.{db,sqlite,sqlite3}")
       );
       let refreshTimeout: NodeJS.Timeout | null = null;
+      let changeCount = 0; // Track changes during debounce window
       const refresh = () => {
         // Skip refresh if this change is from our own save operation
         if (adapter.isRecentSelfSave()) {
           return;
         }
-        
+
+        // Track rapid changes for monitoring
+        changeCount++;
+        if (changeCount > 3) {
+          output.appendLine(`[Extension] Warning: ${changeCount} rapid file changes detected in debounce window. This may indicate external tool making frequent DB updates. Consider increasing debounce delay if you see stale data.`);
+        }
+
         if (refreshTimeout) {
           clearTimeout(refreshTimeout);
         }
@@ -847,6 +854,8 @@ export function activate(context: vscode.ExtensionContext) {
               `Beads auto-refresh failed: ${errorMsg}. Use the Refresh button to try again.`
             );
           }
+          // Reset change tracking after refresh completes
+          changeCount = 0;
           refreshTimeout = null;
         }, 300);
       };

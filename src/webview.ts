@@ -10,6 +10,10 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 
   // Generate cryptographically secure nonce
   const nonce = crypto.randomBytes(16).toString('hex');
+  
+  // Detect platform for keyboard shortcut display
+  const isMac = process.platform === 'darwin';
+  const modKey = isMac ? '⌘' : 'Ctrl';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -44,7 +48,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
         <button id="viewTableBtn" class="view-toggle-btn">Table</button>
       </div>
       <div class="filters">
-        <input id="filterSearch" type="text" placeholder="Search..." class="search-input" />
+        <input id="filterSearch" type="text" placeholder="Search... (${modKey}+F)" title="Focus search (${modKey}+F)" class="search-input" />
         <select id="filterPriority" class="select">
            <option value="">Priority: All</option>
            <option value="0">P0</option>
@@ -61,8 +65,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
            <option value="chore">Chore</option>
         </select>
       </div>
-      <button id="refreshBtn" class="btn">Refresh</button>
-      <button id="newBtn" class="btn primary">New</button>
+      <button id="refreshBtn" class="btn" title="Refresh board (${modKey}+R)">Refresh</button>
+      <button id="newBtn" class="btn primary" title="Create new issue (${modKey}+N)">New</button>
     </div>
   </header>
 
