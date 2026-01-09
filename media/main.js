@@ -1614,6 +1614,24 @@ window.addEventListener("message", (event) => {
         return;
     }
 
+    // Phase 2: Handle issue.full response (full card details)
+    if (msg.type === "issue.full") {
+        console.log('[Webview] Processing issue.full message');
+        console.log('[Webview] Full card:', msg.payload?.card?.id);
+        
+        // Resolve pending request with the full message
+        if (msg.requestId && pendingRequests.has(msg.requestId)) {
+            const { resolve, timeoutId } = pendingRequests.get(msg.requestId);
+            // Clear timeout immediately
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            pendingRequests.delete(msg.requestId);
+            resolve(msg);  // Resolve with the full message so loadFullIssue can check response.type
+        }
+        return;
+    }
+
     if (msg.type === "mutation.ok") {
         // Resolve pending request
         if (msg.requestId && pendingRequests.has(msg.requestId)) {
