@@ -87,22 +87,32 @@ body {
 }
 
 .status-select {
-    min-width: 120px;
+    min-width: 140px;
 }
 
 .status-select[multiple] {
-    /* Override default multi-select height to look like single select when collapsed */
+    /* Multi-select renders as listbox with visible options */
     height: auto;
-    padding: 4px 8px;
+    padding: 2px;
+    max-height: 150px;
+    overflow-y: auto;
 }
 
 .status-select option {
-    padding: 4px 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 2px;
+}
+
+.status-select option:hover {
+    background: var(--vscode-list-hoverBackground);
 }
 
 .status-select option:checked {
     background: var(--vscode-list-activeSelectionBackground);
     color: var(--vscode-list-activeSelectionForeground);
+    font-weight: 500;
 }
 
 .search-input {

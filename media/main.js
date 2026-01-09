@@ -490,22 +490,9 @@ function getFilteredCards() {
         }
         
         // Status filter (multi-select)
+        // Filter by actual database status, not visual column mapping
         if (selectedStatuses.length > 0) {
-            // Determine card's effective status for filtering
-            // This should match the columnForCard logic
-            let cardStatus;
-            if (card.status === "closed") {
-                cardStatus = "closed";
-            } else if (card.is_ready) {
-                cardStatus = "open";
-            } else if (card.status === "in_progress") {
-                cardStatus = "in_progress";
-            } else {
-                // If it's open but not ready, it's blocked
-                cardStatus = "blocked";
-            }
-            
-            if (!selectedStatuses.includes(cardStatus)) {
+            if (!selectedStatuses.includes(card.status)) {
                 continue;
             }
         }
