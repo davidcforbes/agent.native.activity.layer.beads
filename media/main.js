@@ -994,61 +994,65 @@ function getLoadedCount() {
 }
 
 // Load table page from server with filters and sorting
-async function loadTablePage(page = null) {
+// Phase 2: In-memory table pagination using cardCache
+// No server requests - instant filtering, sorting, and pagination
+function loadTablePage(page = null) {
     if (page !== null) {
         tablePaginationState.currentPage = page;
     }
 
+    console.log('[Webview] loadTablePage: page', tablePaginationState.currentPage, 'using in-memory cardCache');
+
+    // Get filtered cards from cache (uses same filters as Kanban view)
+    let filteredCards = getFilteredCards();
+    
+    // Apply table-specific filters (if any)
+    if (tableState.filters.status && tableState.filters.status !== '') {
+        filteredCards = filteredCards.filter(card => card.status === tableState.filters.status);
+    }
+    if (tableState.filters.assignee && tableState.filters.assignee !== '') {
+        filteredCards = filteredCards.filter(card => card.assignee === tableState.filters.assignee);
+    }
+    if (tableState.filters.labels && tableState.filters.labels.length > 0) {
+        filteredCards = filteredCards.filter(card => 
+            card.labels && tableState.filters.labels.some(label => card.labels.includes(label))
+        );
+    }
+
+    // Sort cards using in-memory sort (handle multi-column sorting)
+    let sortedCards = filteredCards;
+    if (tableState.sorting.length > 0) {
+        // Use first sort column (primary sort)
+        const primarySort = tableState.sorting[0];
+        sortedCards = sortCards(filteredCards, primarySort.id, primarySort.dir);
+    } else {
+        // Default sort by updated_at descending
+        sortedCards = sortCards(filteredCards, 'updated_at', 'desc');
+    }
+
+    // Calculate pagination
+    const totalCount = sortedCards.length;
     const offset = tablePaginationState.currentPage * tablePaginationState.pageSize;
     const limit = tablePaginationState.pageSize;
-
-    // Build filters from current UI state
-    const filters = {};
-    const searchTerm = filterSearch.value.trim();
-    if (searchTerm) filters.search = searchTerm;
-    if (filterPriority.value) filters.priority = filterPriority.value;
-    if (filterType.value) filters.type = filterType.value;
-    if (tableState.filters.status) filters.status = tableState.filters.status;
-    if (tableState.filters.assignee) filters.assignee = tableState.filters.assignee;
-    if (tableState.filters.labels && tableState.filters.labels.length > 0) {
-        filters.labels = tableState.filters.labels;
-    }
-
-    console.log('[Webview] loadTablePage: page', tablePaginationState.currentPage, 'offset', offset, 'limit', limit, 'filters', filters, 'sorting', tableState.sorting);
-
-    tablePaginationState.loading = true;
     
-    try {
-        const response = await postAsync('table.loadPage', {
-            filters,
-            sorting: tableState.sorting,
-            offset,
-            limit
-        }, 'Loading table data...');
+    // Slice for current page
+    const pageCards = sortedCards.slice(offset, offset + limit);
 
-        if (response.type === 'table.pageData') {
-            tablePaginationState.cards = response.payload.cards;
-            tablePaginationState.totalCount = response.payload.totalCount;
-            tablePaginationState.loading = false;
-            console.log('[Webview] Loaded table page:', response.payload.cards.length, 'cards, total:', response.payload.totalCount);
-            return true;
-        } else {
-            throw new Error('Unexpected response type: ' + response.type);
-        }
-    } catch (error) {
-        console.error('[Webview] loadTablePage failed:', error);
-        tablePaginationState.loading = false;
-        toast('Failed to load table page: ' + error.message);
-        return false;
-    }
+    // Update state
+    tablePaginationState.cards = pageCards;
+    tablePaginationState.totalCount = totalCount;
+    tablePaginationState.loading = false;
+
+    console.log('[Webview] Table page loaded from cache:', pageCards.length, 'cards, total:', totalCount);
+    return true;
 }
 
-// Table view rendering (async - uses server-side pagination)
-async function renderTable() {
+// Table view rendering (synchronous - uses in-memory cardCache)
+function renderTable() {
     console.log('[Webview] renderTable() called');
 
-    // Load current page from server with filters and sorting
-    const success = await loadTablePage();
+    // Load current page from cardCache with filters and sorting (instant)
+    const success = loadTablePage();
     if (!success) {
         // Error already displayed by loadTablePage
         return;
@@ -1139,10 +1143,10 @@ async function renderTable() {
     // Add page size selector handler
     const pageSizeSelect = document.getElementById('pageSizeSelect');
     if (pageSizeSelect) {
-        pageSizeSelect.addEventListener('change', async (e) => {
+        pageSizeSelect.addEventListener('change', (e) => {
             tablePaginationState.pageSize = parseInt(e.target.value);
             tablePaginationState.currentPage = 0; // Reset to first page
-            await renderTable();
+            renderTable();
         });
     }
 
@@ -1152,19 +1156,19 @@ async function renderTable() {
         const nextBtn = document.getElementById('tableNextPage');
         
         if (prevBtn) {
-            prevBtn.addEventListener('click', async () => {
+            prevBtn.addEventListener('click', () => {
                 if (tablePaginationState.currentPage > 0) {
                     tablePaginationState.currentPage--;
-                    await renderTable();
+                    renderTable();
                 }
             });
         }
         
         if (nextBtn) {
-            nextBtn.addEventListener('click', async () => {
+            nextBtn.addEventListener('click', () => {
                 if (tablePaginationState.currentPage < totalPages - 1) {
                     tablePaginationState.currentPage++;
-                    await renderTable();
+                    renderTable();
                 }
             });
         }
