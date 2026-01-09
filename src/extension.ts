@@ -70,6 +70,48 @@ function validateBoardCards(cards: BoardCard[], output: vscode.OutputChannel): v
   }
 }
 
+/**
+ * Converts technical errors into user-friendly messages with actionable guidance.
+ * Categorizes common failure scenarios and provides specific solutions.
+ */
+function getUserFriendlyErrorMessage(error: unknown): string {
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  const lowerMsg = errorMsg.toLowerCase();
+
+  // No .beads directory
+  if (lowerMsg.includes('enoent') || lowerMsg.includes('no .beads directory') || lowerMsg.includes('cannot find')) {
+    return 'No .beads directory found. Run `bd init` in your workspace to create one, or open a workspace that contains a .beads directory.';
+  }
+
+  // Database locked
+  if (lowerMsg.includes('sqlite_busy') || lowerMsg.includes('database is locked') || lowerMsg.includes('database lock')) {
+    return 'Database is locked by another application. Close other apps using the database, or wait for them to finish.';
+  }
+
+  // Corrupted database
+  if (lowerMsg.includes('corrupt') || lowerMsg.includes('malformed') || lowerMsg.includes('not a database')) {
+    return 'Database appears to be corrupted. Run `bd doctor` to diagnose and repair, or restore from a backup.';
+  }
+
+  // Daemon not running (specific to daemon adapter)
+  if (lowerMsg.includes('daemon') && (lowerMsg.includes('not running') || lowerMsg.includes('connection refused') || lowerMsg.includes('econnrefused'))) {
+    return 'Beads daemon is not running. Start it with `bd daemon start`, or disable daemon mode in settings.';
+  }
+
+  // Permission denied
+  if (lowerMsg.includes('eacces') || lowerMsg.includes('permission denied')) {
+    return 'Permission denied accessing .beads directory. Check file permissions and ensure you have read/write access.';
+  }
+
+  // Out of space
+  if (lowerMsg.includes('enospc') || lowerMsg.includes('no space left')) {
+    return 'No space left on device. Free up disk space and try again.';
+  }
+
+  // Generic fallback with sanitized message
+  return `Failed to load board: ${sanitizeError(error)}. Check the Output panel (Beads Kanban) for details.`;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("Beads Kanban");
   output.appendLine('[BeadsAdapter] Environment Versions: ' + JSON.stringify(process.versions, null, 2));
@@ -421,6 +463,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Use getBoardMetadata() instead of getBoard() to avoid loading all issues
           const data = await adapter.getBoardMetadata();
           data.columnData = columnDataMap;
+          data.readOnly = readOnly; // Add read-only flag for webview
 
           // Validate markdown content in column cards (defense-in-depth)
           // Note: data.cards is now empty array from getBoardMetadata, actual cards are in columnData
@@ -443,6 +486,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Fallback to legacy full load
           output.appendLine(`[Extension] Adapter does not support incremental loading, using legacy getBoard()`);
           const data = await adapter.getBoard();
+          data.readOnly = readOnly; // Add read-only flag for webview
           output.appendLine(`[Extension] Got board data: ${data.cards?.length || 0} cards`);
 
           // Validate markdown content in all cards (defense-in-depth)
@@ -460,7 +504,8 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in sendBoard: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+          // Use user-friendly error message for display, but log technical details
+          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
         }
       }
     };
@@ -506,7 +551,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in handleLoadColumn: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
         }
       }
     };
@@ -544,7 +589,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in handleLoadMore: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
         }
       }
     };
@@ -590,7 +635,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in handleTableLoadPage: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
+          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
         }
       }
     };

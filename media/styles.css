@@ -197,6 +197,11 @@ body {
     cursor: grab;
 }
 
+.card:focus {
+    outline: 2px solid var(--vscode-focusBorder);
+    outline-offset: 2px;
+}
+
 .cardTitle {
     font-weight: 600;
     margin-bottom: 6px;

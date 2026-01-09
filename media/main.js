@@ -32,6 +32,7 @@ let columnState = {
 
 // Legacy boardData for backward compatibility
 let boardData = null;
+let readOnly = false; // Read-only mode flag from extension
 let detailDirty = false;
 
 // Table view pagination state (server-side)
@@ -453,6 +454,28 @@ function render() {
         return;
     }
 
+    // Update UI based on read-only mode
+    if (readOnly) {
+        newBtn.style.display = 'none'; // Hide New Issue button
+
+        // Show read-only banner if not already present
+        if (!document.getElementById('readOnlyBanner')) {
+            const banner = document.createElement('div');
+            banner.id = 'readOnlyBanner';
+            banner.style.cssText = 'background: var(--vscode-inputValidation-warningBackground); color: var(--vscode-inputValidation-warningForeground); padding: 12px; text-align: center; font-weight: 600; margin-bottom: 12px; border-radius: 6px; border: 1px solid var(--vscode-inputValidation-warningBorder);';
+            banner.textContent = '📖 Read-Only Mode - Viewing only, changes are disabled';
+            boardEl.parentElement.insertBefore(banner, boardEl);
+        }
+    } else {
+        newBtn.style.display = ''; // Show New Issue button
+
+        // Remove read-only banner if present
+        const banner = document.getElementById('readOnlyBanner');
+        if (banner) {
+            banner.remove();
+        }
+    }
+
     // Reset table pagination when filters/sort changes (user likely wants to see results from page 1)
     tablePaginationState.currentPage = 0;
 
@@ -572,6 +595,7 @@ function renderKanban() {
         new Sortable(dropZone, {
             group: 'shared', // set both lists to same group
             animation: 150,
+            disabled: readOnly, // Disable drag-and-drop in read-only mode
             ghostClass: 'sortable-ghost',
             chosenClass: 'sortable-chosen',
             dragClass: 'sortable-drag',
@@ -606,7 +630,20 @@ function renderKanban() {
             el.className = "card";
             el.dataset.id = card.id;
 
+            // Accessibility: Make cards keyboard-navigable
+            el.setAttribute('tabindex', '0');
+            el.setAttribute('role', 'button');
+            el.setAttribute('aria-label', `Issue: ${escapeHtml(card.title)}`);
+
             el.addEventListener("click", () => openDetail(card));
+
+            // Keyboard navigation: Enter and Space to open detail
+            el.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openDetail(card);
+                }
+            });
 
             const badges = [];
             badges.push({ text: `P${card.priority}`, cls: `badge-priority-${card.priority}` });
@@ -1253,8 +1290,9 @@ window.addEventListener("message", (event) => {
         
         // Maintain backward compatibility
         boardData = msg.payload;
-        
-        console.log('[Webview] columnState initialized, calling render()');
+        readOnly = msg.payload.readOnly || false; // Extract read-only flag
+
+        console.log('[Webview] columnState initialized, readOnly=' + readOnly + ', calling render()');
         render();
         console.log('[Webview] render() completed, calling hideLoading()');
         hideLoading();

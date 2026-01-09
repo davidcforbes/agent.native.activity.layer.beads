@@ -41,12 +41,62 @@ const daemonBeadsAdapter_1 = require("./daemonBeadsAdapter");
 const daemonManager_1 = require("./daemonManager");
 const webview_1 = require("./webview");
 const sanitizeError_1 = require("./sanitizeError");
+const markdownValidator_1 = require("./markdownValidator");
 const types_1 = require("./types");
 // Size limits for text operations
 const MAX_CHAT_TEXT = 50_000; // 50KB reasonable for chat
 const MAX_CLIPBOARD_TEXT = 100_000; // 100KB for clipboard
 // Sanitize error messages to prevent leaking implementation details
 // sanitizeError is now imported from ./sanitizeError
+/**
+ * Validates markdown content in all cards before sending to webview.
+ * Logs warnings for suspicious content but does not block sending.
+ * This is a defense-in-depth measure - webview still uses DOMPurify.
+ */
+function validateBoardCards(cards, output) {
+    for (const card of cards) {
+        (0, markdownValidator_1.validateMarkdownFields)({
+            description: card.description,
+            acceptance_criteria: card.acceptance_criteria,
+            design: card.design,
+            notes: card.notes
+        }, output);
+    }
+}
+/**
+ * Converts technical errors into user-friendly messages with actionable guidance.
+ * Categorizes common failure scenarios and provides specific solutions.
+ */
+function getUserFriendlyErrorMessage(error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const lowerMsg = errorMsg.toLowerCase();
+    // No .beads directory
+    if (lowerMsg.includes('enoent') || lowerMsg.includes('no .beads directory') || lowerMsg.includes('cannot find')) {
+        return 'No .beads directory found. Run `bd init` in your workspace to create one, or open a workspace that contains a .beads directory.';
+    }
+    // Database locked
+    if (lowerMsg.includes('sqlite_busy') || lowerMsg.includes('database is locked') || lowerMsg.includes('database lock')) {
+        return 'Database is locked by another application. Close other apps using the database, or wait for them to finish.';
+    }
+    // Corrupted database
+    if (lowerMsg.includes('corrupt') || lowerMsg.includes('malformed') || lowerMsg.includes('not a database')) {
+        return 'Database appears to be corrupted. Run `bd doctor` to diagnose and repair, or restore from a backup.';
+    }
+    // Daemon not running (specific to daemon adapter)
+    if (lowerMsg.includes('daemon') && (lowerMsg.includes('not running') || lowerMsg.includes('connection refused') || lowerMsg.includes('econnrefused'))) {
+        return 'Beads daemon is not running. Start it with `bd daemon start`, or disable daemon mode in settings.';
+    }
+    // Permission denied
+    if (lowerMsg.includes('eacces') || lowerMsg.includes('permission denied')) {
+        return 'Permission denied accessing .beads directory. Check file permissions and ensure you have read/write access.';
+    }
+    // Out of space
+    if (lowerMsg.includes('enospc') || lowerMsg.includes('no space left')) {
+        return 'No space left on device. Free up disk space and try again.';
+    }
+    // Generic fallback with sanitized message
+    return `Failed to load board: ${(0, sanitizeError_1.sanitizeErrorWithContext)(error)}. Check the Output panel (Beads Kanban) for details.`;
+}
 function activate(context) {
     const output = vscode.window.createOutputChannel("Beads Kanban");
     output.appendLine('[BeadsAdapter] Environment Versions: ' + JSON.stringify(process.versions, null, 2));
@@ -110,18 +160,28 @@ function activate(context) {
                             await daemonManager.start();
                             output.appendLine('[Extension] Daemon started successfully');
                             // Update status immediately after starting
-                            setTimeout(updateDaemonStatus, 1000); // Give daemon time to initialize
+                            setTimeout(() => {
+                                updateDaemonStatus().catch(err => {
+                                    output.appendLine(`[Extension] Error updating daemon status after start: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
+                                });
+                            }, 1000); // Give daemon time to initialize
                         }
                         catch (startError) {
                             output.appendLine(`[Extension] Failed to auto-start daemon: ${(0, sanitizeError_1.sanitizeErrorWithContext)(startError)}`);
                             // Show notification with option to start manually
                             vscode.window.showWarningMessage('Beads daemon is not running. The extension requires the daemon when configured to use DaemonBeadsAdapter.', 'Start Daemon', 'Disable Daemon Mode').then(action => {
                                 if (action === 'Start Daemon') {
-                                    vscode.commands.executeCommand('beadsKanban.showDaemonActions');
+                                    vscode.commands.executeCommand('beadsKanban.showDaemonActions').then(undefined, err => {
+                                        output.appendLine(`[Extension] Error executing showDaemonActions command: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
+                                    });
                                 }
                                 else if (action === 'Disable Daemon Mode') {
-                                    vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true);
+                                    vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true).then(undefined, err => {
+                                        output.appendLine(`[Extension] Error disabling daemon mode: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
+                                    });
                                 }
+                            }).then(undefined, err => {
+                                output.appendLine(`[Extension] Error in showWarningMessage handler: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
                             });
                         }
                     }
@@ -257,8 +317,9 @@ function activate(context) {
             loadedRanges.set('blocked', []);
             loadedRanges.set('closed', []);
             const post = (msg) => {
-                if (isDisposed) {
-                    output.appendLine(`[Extension] Attempted to post to disposed webview: ${msg.type}`);
+                // Check both disposal flag and cancellation token to prevent race conditions
+                if (isDisposed || cancellationToken.cancelled) {
+                    output.appendLine(`[Extension] Attempted to post to disposed/cancelled webview: ${msg.type}`);
                     return;
                 }
                 try {
@@ -267,6 +328,7 @@ function activate(context) {
                 catch (e) {
                     output.appendLine(`[Extension] Error posting message: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     isDisposed = true; // Mark as disposed if posting fails
+                    cancellationToken.cancelled = true; // Also cancel token
                 }
             };
             const sendBoard = async (requestId) => {
@@ -348,8 +410,19 @@ function activate(context) {
                             columnDataMap['closed'] = closedColumnData;
                             output.appendLine(`[Extension] Closed column not preloaded (${totalCount} total cards available)`);
                         }
-                        const data = await adapter.getBoard();
+                        // Use getBoardMetadata() instead of getBoard() to avoid loading all issues
+                        const data = await adapter.getBoardMetadata();
                         data.columnData = columnDataMap;
+                        data.readOnly = readOnly; // Add read-only flag for webview
+                        // Validate markdown content in column cards (defense-in-depth)
+                        // Note: data.cards is now empty array from getBoardMetadata, actual cards are in columnData
+                        // Also validate cards in columnData
+                        for (const column of Object.keys(columnDataMap)) {
+                            const columnCards = columnDataMap[column]?.cards;
+                            if (columnCards && columnCards.length > 0) {
+                                validateBoardCards(columnCards, output);
+                            }
+                        }
                         output.appendLine(`[Extension] Sending incremental board data with columnData`);
                         // Check cancellation before posting to prevent race with disposal
                         if (!cancellationToken.cancelled) {
@@ -363,7 +436,10 @@ function activate(context) {
                         // Fallback to legacy full load
                         output.appendLine(`[Extension] Adapter does not support incremental loading, using legacy getBoard()`);
                         const data = await adapter.getBoard();
-                        output.appendLine(`[Extension] Got board data: ${data.cards.length} cards`);
+                        data.readOnly = readOnly; // Add read-only flag for webview
+                        output.appendLine(`[Extension] Got board data: ${data.cards?.length || 0} cards`);
+                        // Validate markdown content in all cards (defense-in-depth)
+                        validateBoardCards(data.cards || [], output);
                         // Check cancellation before posting to prevent race with disposal
                         if (!cancellationToken.cancelled) {
                             post({ type: "board.data", requestId, payload: data });
@@ -378,7 +454,8 @@ function activate(context) {
                     output.appendLine(`[Extension] Error in sendBoard: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     // Check both disposal flag and cancellation token
                     if (!isDisposed && !cancellationToken.cancelled) {
-                        post({ type: "mutation.error", requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
+                        // Use user-friendly error message for display, but log technical details
+                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
                     }
                 }
             };
@@ -420,7 +497,7 @@ function activate(context) {
                     output.appendLine(`[Extension] Error in handleLoadColumn: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     // Check both disposal flag and cancellation token
                     if (!isDisposed && !cancellationToken.cancelled) {
-                        post({ type: "mutation.error", requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
+                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
                     }
                 }
             };
@@ -453,7 +530,44 @@ function activate(context) {
                     output.appendLine(`[Extension] Error in handleLoadMore: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     // Check both disposal flag and cancellation token
                     if (!isDisposed && !cancellationToken.cancelled) {
-                        post({ type: "mutation.error", requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
+                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+                    }
+                }
+            };
+            const handleTableLoadPage = async (requestId, filters, sorting, offset, limit) => {
+                if (isDisposed) {
+                    output.appendLine(`[Extension] Skipping handleTableLoadPage - webview is disposed`);
+                    return;
+                }
+                output.appendLine(`[Extension] handleTableLoadPage: offset=${offset}, limit=${limit}, filters=${JSON.stringify(filters)}, sorting=${JSON.stringify(sorting)}`);
+                try {
+                    // Call adapter's getTableData method
+                    const result = await adapter.getTableData(filters, sorting, offset, limit);
+                    // Validate markdown content in returned cards (defense-in-depth)
+                    validateBoardCards(result.cards, output);
+                    output.appendLine(`[Extension] Loaded ${result.cards.length} cards for table (${offset}-${offset + result.cards.length}/${result.totalCount})`);
+                    // Send response - check cancellation before posting
+                    if (!cancellationToken.cancelled) {
+                        post({
+                            type: 'table.pageData',
+                            requestId,
+                            payload: {
+                                cards: result.cards,
+                                offset,
+                                totalCount: result.totalCount,
+                                hasMore: (offset + result.cards.length) < result.totalCount
+                            }
+                        });
+                    }
+                    else {
+                        output.appendLine(`[Extension] Skipped posting table.pageData - operation cancelled`);
+                    }
+                }
+                catch (e) {
+                    output.appendLine(`[Extension] Error in handleTableLoadPage: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
+                    // Check both disposal flag and cancellation token
+                    if (!isDisposed && !cancellationToken.cancelled) {
+                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
                     }
                 }
             };
@@ -476,6 +590,54 @@ function activate(context) {
                     await handleLoadMore(msg.requestId, column);
                     return;
                 }
+                if (msg.type === "table.loadPage") {
+                    const { filters, sorting, offset, limit } = msg.payload;
+                    await handleTableLoadPage(msg.requestId, filters, sorting, offset, limit);
+                    return;
+                }
+                if (msg.type === "repo.select") {
+                    // Open folder picker to select a different beads repository
+                    const selectedFolder = await vscode.window.showOpenDialog({
+                        canSelectFiles: false,
+                        canSelectFolders: true,
+                        canSelectMany: false,
+                        openLabel: "Select Beads Repository Folder",
+                        title: "Select a folder containing a .beads directory"
+                    });
+                    if (selectedFolder && selectedFolder[0]) {
+                        const folderPath = selectedFolder[0].fsPath;
+                        const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
+                        const path = await Promise.resolve().then(() => __importStar(require('path')));
+                        const beadsPath = path.join(folderPath, '.beads');
+                        try {
+                            const stat = await fs.stat(beadsPath);
+                            if (!stat.isDirectory()) {
+                                vscode.window.showErrorMessage(`Selected folder does not contain a .beads directory.`);
+                                post({ type: "mutation.error", requestId: msg.requestId, error: "No .beads directory found" });
+                                return;
+                            }
+                            // Store the selected path in workspace state for future sessions
+                            await context.workspaceState.update('beadsRepoPath', folderPath);
+                            // Show info message
+                            vscode.window.showInformationMessage(`Switched to repository: ${folderPath}. Please reload the extension to apply changes.`, 'Reload')
+                                .then(action => {
+                                if (action === 'Reload') {
+                                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                                }
+                            });
+                            post({ type: "mutation.ok", requestId: msg.requestId });
+                        }
+                        catch (err) {
+                            vscode.window.showErrorMessage(`Selected folder does not contain a .beads directory.`);
+                            post({ type: "mutation.error", requestId: msg.requestId, error: "No .beads directory found" });
+                        }
+                    }
+                    else {
+                        // User cancelled
+                        post({ type: "mutation.ok", requestId: msg.requestId });
+                    }
+                    return;
+                }
                 if (readOnly) {
                     post({ type: "mutation.error", requestId: msg.requestId, error: "Extension is in read-only mode." });
                     return;
@@ -486,6 +648,14 @@ function activate(context) {
                         if (!validation.success) {
                             post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${validation.error.message}` });
                             return;
+                        }
+                        // Validate markdown content (defense-in-depth)
+                        const createValid = (0, markdownValidator_1.validateMarkdownFields)({
+                            description: validation.data.description
+                        }, output);
+                        if (!createValid) {
+                            output.appendLine(`[Extension] Warning: Suspicious content detected in new issue`);
+                            // Log warning but allow creation (defense-in-depth, not blocking)
                         }
                         await adapter.createIssue(validation.data);
                         post({ type: "mutation.ok", requestId: msg.requestId });
@@ -533,6 +703,17 @@ function activate(context) {
                             post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${validation.error.message}` });
                             return;
                         }
+                        // Validate markdown content in updates (defense-in-depth)
+                        const updateValid = (0, markdownValidator_1.validateMarkdownFields)({
+                            description: validation.data.updates.description,
+                            acceptance_criteria: validation.data.updates.acceptance_criteria,
+                            design: validation.data.updates.design,
+                            notes: validation.data.updates.notes
+                        }, output);
+                        if (!updateValid) {
+                            output.appendLine(`[Extension] Warning: Suspicious content detected in issue update`);
+                            // Log warning but allow update (defense-in-depth, not blocking)
+                        }
                         await adapter.updateIssue(validation.data.id, validation.data.updates);
                         post({ type: "mutation.ok", requestId: msg.requestId });
                         await sendBoard(msg.requestId);
@@ -551,6 +732,12 @@ function activate(context) {
                         if (!validation.success) {
                             post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${validation.error.message}` });
                             return;
+                        }
+                        // Validate comment markdown content (defense-in-depth)
+                        const commentValidation = (0, markdownValidator_1.validateCommentContent)(validation.data.text, output);
+                        if (!commentValidation.isValid) {
+                            output.appendLine(`[Extension] Warning: Suspicious content detected in comment`);
+                            // Log warning but allow comment (defense-in-depth, not blocking)
                         }
                         await adapter.addComment(validation.data.id, validation.data.text, validation.data.author);
                         post({ type: "mutation.ok", requestId: msg.requestId });
@@ -640,15 +827,26 @@ function activate(context) {
             if (ws) {
                 const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(ws, ".beads/**/*.{db,sqlite,sqlite3}"));
                 let refreshTimeout = null;
+                let changeCount = 0; // Track changes during debounce window
                 const refresh = () => {
                     // Skip refresh if this change is from our own save operation
                     if (adapter.isRecentSelfSave()) {
                         return;
                     }
+                    // Track rapid changes for monitoring
+                    changeCount++;
+                    if (changeCount > 3) {
+                        output.appendLine(`[Extension] Warning: ${changeCount} rapid file changes detected in debounce window. This may indicate external tool making frequent DB updates. Consider increasing debounce delay if you see stale data.`);
+                    }
                     if (refreshTimeout) {
                         clearTimeout(refreshTimeout);
                     }
                     refreshTimeout = setTimeout(async () => {
+                        // Clear timeout reference immediately to prevent race conditions
+                        // This must happen BEFORE any awaits, otherwise a new file change
+                        // could come in and see the old timeout reference
+                        const currentTimeout = refreshTimeout;
+                        refreshTimeout = null;
                         try {
                             // Reload database from disk to pick up external changes
                             await adapter.reloadDatabase();
@@ -666,7 +864,10 @@ function activate(context) {
                             // Show warning to user so they know auto-refresh is broken
                             vscode.window.showWarningMessage(`Beads auto-refresh failed: ${errorMsg}. Use the Refresh button to try again.`);
                         }
-                        refreshTimeout = null;
+                        finally {
+                            // Reset change tracking after refresh completes
+                            changeCount = 0;
+                        }
                     }, 300);
                 };
                 watcher.onDidChange(refresh);

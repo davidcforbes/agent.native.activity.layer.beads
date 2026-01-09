@@ -129,6 +129,8 @@ export interface BoardData {
   cards?: BoardCard[];  // Optional - not needed when using columnData
   // Enhanced fields for incremental loading (optional for backward compat)
   columnData?: ColumnDataMap;
+  // Read-only mode flag - when true, webview should disable all mutation controls
+  readOnly?: boolean;
 }
 
 // Helper types for incremental loading
