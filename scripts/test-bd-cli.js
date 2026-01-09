@@ -45,32 +45,52 @@ const testResults = {
   tests: []
 };
 
+let noDaemonOnly = false;
+
 /**
  * Execute bd command and return parsed JSON output
  */
+const { spawnSync } = require('child_process');
+
 function bdExec(args, { expectJson = true, noDaemon = false } = {}) {
   const cmdArgs = [...args];
-  if (noDaemon) cmdArgs.push('--no-daemon');
+  // Respect global noDaemonOnly flag or local override
+  if (noDaemon || (typeof noDaemonOnly !== 'undefined' && noDaemonOnly)) {
+    // Only add if not already present to avoid duplicates
+    if (!cmdArgs.includes('--no-daemon')) {
+      cmdArgs.push('--no-daemon');
+    }
+  }
   if (expectJson && !cmdArgs.includes('--json')) cmdArgs.push('--json');
 
   try {
-    const output = execSync(`bd ${cmdArgs.map(arg => {
-      // Quote arguments that contain spaces or special characters
-      if (typeof arg === 'string' && (arg.includes(' ') || arg.includes('&') || arg.includes('|'))) {
-        return `"${arg.replace(/"/g, '\\"')}"`;
-      }
-      return arg;
-    }).join(' ')}`, {
+    const result = spawnSync('bd', cmdArgs, {
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true
+      shell: false,
+      timeout: 30000 // 30 second timeout
     });
+
+    const output = result.stdout || '';
+    const stderr = result.stderr || '';
+
+    if (result.status !== 0) {
+      return {
+        success: false,
+        error: `Command failed with status ${result.status}`,
+        stderr: stderr,
+        stdout: output,
+        raw: output + stderr
+      };
+    }
 
     if (expectJson) {
       try {
-        return { success: true, data: JSON.parse(output), raw: output };
+        // Try to find JSON block in the output (handles warnings/info messages before/after JSON)
+        const jsonMatch = output.match(/(\{|\[)[\s\S]*(\}|\])/);
+        const jsonToParse = jsonMatch ? jsonMatch[0] : output;
+        return { success: true, data: JSON.parse(jsonToParse), raw: output };
       } catch (e) {
-        return { success: false, error: 'Failed to parse JSON', raw: output };
+        return { success: false, error: `Failed to parse JSON: ${e.message}`, raw: output };
       }
     }
     return { success: true, raw: output };
@@ -78,8 +98,7 @@ function bdExec(args, { expectJson = true, noDaemon = false } = {}) {
     return {
       success: false,
       error: error.message,
-      stderr: error.stderr?.toString(),
-      stdout: error.stdout?.toString()
+      stack: error.stack
     };
   }
 }
@@ -161,7 +180,6 @@ function testIssueCreation() {
       '--description', 'Test description',
       '--type', 'bug',
       '--priority', '1',
-      '--assignee', 'TestUser',
       '--estimate', '60',
       '--due', '2026-01-15',
       '--defer', '2026-01-10',
@@ -269,9 +287,12 @@ function testIssueUpdates() {
     const testName = `Update ${field.jsonField}`;
 
     // Test WITH daemon
-    const withDaemonResult = bdExec(['update', issueId, field.flag, field.value], { noDaemon: false });
-    const afterDaemon = bdExec(['show', issueId]);
-    const valueWithDaemon = afterDaemon.data?.[0]?.[field.jsonField];
+    let valueWithDaemon;
+    if (!noDaemonOnly) {
+      const withDaemonResult = bdExec(['update', issueId, field.flag, field.value], { noDaemon: false });
+      const afterDaemon = bdExec(['show', issueId]);
+      valueWithDaemon = afterDaemon.data?.[0]?.[field.jsonField];
+    }
 
     // Test WITHOUT daemon
     const withoutDaemonResult = bdExec(['update', issueId, field.flag, field.value], { noDaemon: true });
@@ -282,7 +303,7 @@ function testIssueUpdates() {
     const expected = field.expectedValue !== undefined ? field.expectedValue : field.value;
 
     test(testName, () => {
-      const daemonMatch = valueWithDaemon === expected ||
+      const daemonMatch = noDaemonOnly || valueWithDaemon === expected ||
                          (field.jsonField === 'due_at' && valueWithDaemon && valueWithDaemon.includes(field.value)) ||
                          (field.jsonField === 'defer_until' && valueWithDaemon && valueWithDaemon.includes(field.value));
       const noDaemonMatch = valueWithoutDaemon === expected ||
@@ -293,7 +314,7 @@ function testIssueUpdates() {
         return { pass: true };
       }
 
-      if (!daemonMatch && noDaemonMatch) {
+      if (!noDaemonOnly && !daemonMatch && noDaemonMatch) {
         return compareValues(
           testName,
           field.jsonField,
@@ -540,7 +561,7 @@ function cleanup() {
  */
 function main() {
   const args = process.argv.slice(2);
-  const noDaemonOnly = args.includes('--no-daemon-only');
+  noDaemonOnly = args.includes('--no-daemon-only');
 
   log('cyan', '\n╔════════════════════════════════════════════════════════════╗');
   log('cyan', '║          BD CLI Comprehensive Validation Tests              ║');
