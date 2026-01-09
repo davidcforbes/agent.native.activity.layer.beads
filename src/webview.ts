@@ -72,15 +72,21 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
            <option value="epic">Epic</option>
            <option value="chore">Chore</option>
         </select>
-        <select id="filterStatus" class="select status-select" multiple size="5" title="Status: Hold Ctrl/Cmd to select multiple">
-           <option value="open">Open</option>
-           <option value="in_progress">In Progress</option>
-           <option value="blocked">Blocked</option>
-           <option value="deferred">Deferred</option>
-           <option value="closed">Closed</option>
-           <option value="tombstone">Tombstone</option>
-           <option value="pinned">Pinned</option>
-        </select>
+        <div class="status-filter-wrapper">
+          <button id="filterStatusBtn" class="select status-filter-btn" type="button" title="Filter by status">
+            <span id="filterStatusLabel">Status: All</span>
+            <span class="dropdown-arrow">▼</span>
+          </button>
+          <div id="filterStatusDropdown" class="status-dropdown hidden">
+            <label class="status-option"><input type="checkbox" value="open" /> Open</label>
+            <label class="status-option"><input type="checkbox" value="in_progress" /> In Progress</label>
+            <label class="status-option"><input type="checkbox" value="blocked" /> Blocked</label>
+            <label class="status-option"><input type="checkbox" value="deferred" /> Deferred</label>
+            <label class="status-option"><input type="checkbox" value="closed" /> Closed</label>
+            <label class="status-option"><input type="checkbox" value="tombstone" /> Tombstone</label>
+            <label class="status-option"><input type="checkbox" value="pinned" /> Pinned</label>
+          </div>
+        </div>
         <button id="clearFiltersBtn" class="btn" title="Clear all filters">Clear Filters</button>
       </div>
       <button id="refreshBtn" class="btn" title="Refresh board (${modKey}+R)">Refresh</button>

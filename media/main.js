@@ -16,9 +16,56 @@ const copyContextBtn = document.getElementById("copyContextBtn");
 
 const filterPriority = document.getElementById("filterPriority");
 const filterType = document.getElementById("filterType");
-const filterStatus = document.getElementById("filterStatus");
+const filterStatusBtn = document.getElementById("filterStatusBtn");
+const filterStatusLabel = document.getElementById("filterStatusLabel");
+const filterStatusDropdown = document.getElementById("filterStatusDropdown");
 const filterSearch = document.getElementById("filterSearch");
 const clearFiltersBtn = document.getElementById("clearFiltersBtn");
+
+// Custom status filter dropdown logic
+function getSelectedStatuses() {
+    const checkboxes = filterStatusDropdown.querySelectorAll('input[type="checkbox"]:checked');
+    return Array.from(checkboxes).map(cb => cb.value);
+}
+
+function updateStatusLabel() {
+    const selected = getSelectedStatuses();
+    if (selected.length === 0) {
+        filterStatusLabel.textContent = 'Status: All';
+    } else if (selected.length === 1) {
+        // Capitalize first letter
+        const status = selected[0].replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        filterStatusLabel.textContent = `Status: ${status}`;
+    } else {
+        filterStatusLabel.textContent = `Status: ${selected.length} selected`;
+    }
+}
+
+// Toggle dropdown on button click
+filterStatusBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    filterStatusDropdown.classList.toggle('hidden');
+});
+
+// Update label and trigger filter when checkbox changes
+filterStatusDropdown.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+    checkbox.addEventListener('change', () => {
+        updateStatusLabel();
+        render();
+    });
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    if (!filterStatusDropdown.contains(e.target) && e.target !== filterStatusBtn) {
+        filterStatusDropdown.classList.add('hidden');
+    }
+});
+
+// Prevent dropdown from closing when clicking inside it
+filterStatusDropdown.addEventListener('click', (e) => {
+    e.stopPropagation();
+});
 
 const viewKanbanBtn = document.getElementById("viewKanbanBtn");
 const viewTableBtn = document.getElementById("viewTableBtn");
@@ -468,8 +515,8 @@ function getFilteredCards() {
     const tVal = filterType.value;
     const sVal = filterSearch.value.toLowerCase().trim();
     
-    // Get selected status values from multi-select
-    const selectedStatuses = Array.from(filterStatus.selectedOptions).map(opt => opt.value);
+    // Get selected status values from custom dropdown
+    const selectedStatuses = getSelectedStatuses();
     console.log('[Webview] getFilteredCards - selectedStatuses:', selectedStatuses);
     
     // If no filters, return all cards from cache
@@ -1340,17 +1387,16 @@ const debouncedRender = debounce(render, 300);
 
 filterPriority.addEventListener("change", render); // Immediate for dropdown
 filterType.addEventListener("change", render); // Immediate for dropdown
-filterStatus.addEventListener("change", () => {
-    console.log('[Webview] Status filter changed, selected options:', Array.from(filterStatus.selectedOptions).map(opt => opt.value));
-    render();
-}); // Immediate for multi-select
+// Status filter now handled by custom dropdown logic above
 filterSearch.addEventListener("input", debouncedRender); // Debounced for text input
 
 // Clear all filters
 clearFiltersBtn.addEventListener("click", () => {
     filterPriority.value = '';
     filterType.value = '';
-    filterStatus.selectedIndex = -1; // Clear all selections in multi-select
+    // Clear all status checkboxes
+    filterStatusDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateStatusLabel();
     filterSearch.value = '';
     render();
 });
@@ -1849,58 +1895,49 @@ async function openDetail(card) {
         <div style="display: flex; flex-direction: column; gap: 12px;">
             <h3 style="margin: 0 0 12px 0;">${isCreateMode ? 'Create New Issue' : `Edit Issue <span style="color: var(--muted); font-weight: normal; font-size: 14px;">${escapeHtml(card.id)}</span>`}</h3>
             
-            <!-- Row 1: Title only -->
-            <div>
-                <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Title</label>
-                <input id="editTitle" type="text" value="${safe(card.title)}" style="width: 100%; font-size: 16px; font-weight: bold; margin-top: 4px;" />
+            <!-- Row 1: Title label and text box inline -->
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <label style="font-size: 13px; font-weight: 500; min-width: 40px;">Title:</label>
+                <input id="editTitle" type="text" value="${safe(card.title)}" style="flex: 1; font-size: 16px; font-weight: bold;" />
             </div>
 
-            <!-- Row 2: Status, Type, Priority, Assignee -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 2fr; gap: 12px; margin-top: 12px;">
-                <div>
-                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Status</label>
-                    <select id="editStatus" style="width: 100%; margin-top: 4px;">
-                        ${statusOptions.map(o => `<option value="${o.v}" ${card.status === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
-                    </select>
-                </div>
-                <div>
-                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Type</label>
-                    <select id="editType" style="width: 100%; margin-top: 4px;">
-                        ${typeOptions.map(t => `<option value="${t}" ${card.issue_type === t ? 'selected' : ''}>${t}</option>`).join('')}
-                    </select>
-                </div>
-                <div>
-                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Priority</label>
-                    <select id="editPriority" style="width: 100%; margin-top: 4px;">
-                        ${priorityOptions.map(p => `<option value="${p}" ${card.priority === p ? 'selected' : ''}'>P${p}</option>`).join('')}
-                    </select>
-                </div>
-                <div>
-                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Assignee</label>
-                    <input id="editAssignee" type="text" value="${safe(card.assignee)}" placeholder="Unassigned" style="width: 100%; margin-top: 4px;" />
-                </div>
+            <!-- Row 2: Status, Type, Priority, Assignee - all inline with labels -->
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <label style="font-size: 13px; font-weight: 500;">Status:</label>
+                <select id="editStatus" style="flex: 1;">
+                    ${statusOptions.map(o => `<option value="${o.v}" ${card.status === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
+                </select>
+                
+                <label style="font-size: 13px; font-weight: 500;">Type:</label>
+                <select id="editType" style="flex: 1;">
+                    ${typeOptions.map(t => `<option value="${t}" ${card.issue_type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                </select>
+                
+                <label style="font-size: 13px; font-weight: 500;">Priority:</label>
+                <select id="editPriority" style="flex: 1;">
+                    ${priorityOptions.map(p => `<option value="${p}" ${card.priority === p ? 'selected' : ''}>P${p}</option>`).join('')}
+                </select>
+                
+                <label style="font-size: 13px; font-weight: 500;">Assignee:</label>
+                <input id="editAssignee" type="text" value="${safe(card.assignee)}" placeholder="Unassigned" style="flex: 1;" />
             </div>
 
-            <!-- Row 3: Est. Minutes, Due At, Defer Until -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 12px;">
-                <div>
-                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Est. Minutes</label>
-                    <input id="editEst" type="number" value="${card.estimated_minutes || ''}" placeholder="Min" style="width: 100%; margin-top: 4px;" />
-                </div>
-                <div>
-                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Due At</label>
-                    <input id="editDueAt" type="datetime-local" value="${toLocalDateTimeInput(card.due_at)}" style="width: 100%; margin-top: 4px;" />
-                </div>
-                <div>
-                    <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Defer Until</label>
-                    <input id="editDeferUntil" type="datetime-local" value="${toLocalDateTimeInput(card.defer_until)}" style="width: 100%; margin-top: 4px;" />
-                </div>
+            <!-- Row 3: Est. Minutes, Due At, Defer Until - all inline with labels -->
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <label style="font-size: 13px; font-weight: 500; white-space: nowrap;">Est. Minutes:</label>
+                <input id="editEst" type="number" value="${card.estimated_minutes || ''}" placeholder="Min" style="flex: 1;" />
+                
+                <label style="font-size: 13px; font-weight: 500; white-space: nowrap;">Due At:</label>
+                <input id="editDueAt" type="datetime-local" value="${toLocalDateTimeInput(card.due_at)}" style="flex: 1;" />
+                
+                <label style="font-size: 13px; font-weight: 500; white-space: nowrap;">Defer Until:</label>
+                <input id="editDeferUntil" type="datetime-local" value="${toLocalDateTimeInput(card.defer_until)}" style="flex: 1;" />
             </div>
 
             <!-- Row 4: Ext Ref -->
-            <div style="margin-top: 12px;">
-                <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Ext Ref</label>
-                <input id="editExtRef" type="text" value="${safe(card.external_ref)}" placeholder="JIRA-123" style="width: 100%; margin-top: 4px;" />
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <label style="font-size: 13px; font-weight: 500; min-width: 60px;">Ext Ref:</label>
+                <input id="editExtRef" type="text" value="${safe(card.external_ref)}" placeholder="JIRA-123" style="flex: 1;" />
             </div>
 
             <!-- Flags -->
