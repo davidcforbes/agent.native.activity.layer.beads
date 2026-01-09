@@ -19,9 +19,8 @@ import {
 export class DaemonBeadsAdapter {
   private workspaceRoot: string;
   private output: vscode.OutputChannel;
-  private boardCache: BoardData | null = null;
-  private cacheTimestamp: number = 0;
   private lastMutationTime: number = 0;
+  private lastInteractionTime: number = 0;
 
   // Circuit breaker state for batch failure recovery
   private circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
@@ -335,10 +334,8 @@ export class DaemonBeadsAdapter {
    * Reload database (no-op for daemon adapter, always reads from daemon)
    */
   public async reloadDatabase(): Promise<void> {
-    // Invalidate cache to force fresh data on next getBoard()
-    this.boardCache = null;
-    this.cacheTimestamp = 0;
-    this.output.appendLine('[DaemonBeadsAdapter] Cache invalidated');
+    // Database reload - daemon automatically provides fresh data
+    this.output.appendLine('[DaemonBeadsAdapter] Database reload requested');
   }
 
   /**
@@ -346,30 +343,40 @@ export class DaemonBeadsAdapter {
    */
   private trackMutation(): void {
     this.lastMutationTime = Date.now();
-    this.boardCache = null;
   }
 
   /**
-   * No-op for daemon adapter (not needed for external save detection)
+   * Track that an interaction (read or write) occurred that might touch the DB file
+   */
+  private trackInteraction(): void {
+    this.lastInteractionTime = Date.now();
+  }
+
+  /**
+   * Check if we recently modified or interacted with the DB
+   * This is used to suppress file watcher loops
    */
   public isRecentSelfSave(): boolean {
-    // Consider a mutation "recent" if it happened within the last 3 seconds
-    // This accounts for: bd command execution (~500ms), file write, file watcher debounce (300ms), and buffer
-    // Increased from 2s to 3s to prevent edge-case race conditions
-    return (Date.now() - this.lastMutationTime) < 3000;
+    // Consider a mutation/interaction "recent" if it happened within the last 5 seconds
+    const now = Date.now();
+    const mutationDiff = now - this.lastMutationTime;
+    const interactionDiff = now - this.lastInteractionTime;
+    
+    const isRecent = (mutationDiff < 5000) || (interactionDiff < 5000);
+    
+    if (isRecent) {
+       this.output.appendLine(`[DaemonBeadsAdapter] isRecentSelfSave: TRUE (mutation: ${mutationDiff}ms, interaction: ${interactionDiff}ms)`);
+    }
+    
+    return isRecent;
   }
 
   /**
    * Get board data from bd daemon
    */
   public async getBoard(): Promise<BoardData> {
-    // Configurable cache TTL to reduce CLI overhead (default: 5 seconds)
-    const cacheTTL = vscode.workspace.getConfiguration('beadsKanban').get<number>('daemonCacheTTL', 5000);
-    const now = Date.now();
-    if (this.boardCache && (now - this.cacheTimestamp) < cacheTTL) {
-      this.output.appendLine(`[DaemonBeadsAdapter] Returning cached board data (age: ${now - this.cacheTimestamp}ms)`);
-      return this.boardCache;
-    }
+    this.trackInteraction();
+    // Load fresh data from daemon
 
     // Read pagination limit from configuration
     const maxIssues = vscode.workspace.getConfiguration('beadsKanban').get<number>('maxIssues', 1000);
@@ -390,8 +397,6 @@ export class DaemonBeadsAdapter {
           ],
           cards: []
         };
-        this.boardCache = emptyBoard;
-        this.cacheTimestamp = Date.now();
         return emptyBoard;
       }
 
@@ -472,9 +477,6 @@ export class DaemonBeadsAdapter {
 
       const boardData = this.mapIssuesToBoardData(detailedIssues);
       
-      this.boardCache = boardData;
-      this.cacheTimestamp = Date.now();
-      
       return boardData;
     } catch (error) {
       throw new Error(`Failed to get board data: ${error instanceof Error ? error.message : String(error)}`);
@@ -488,6 +490,7 @@ export class DaemonBeadsAdapter {
    */
   public async getBoardMinimal(): Promise<EnrichedCard[]> {
     try {
+      this.trackInteraction();
       // Single fast query - no batching needed
       const issues = await this.execBd(['list', '--json', '--all', '--limit', '10000']);
 
@@ -534,6 +537,7 @@ export class DaemonBeadsAdapter {
   public async getIssueFull(issueId: string): Promise<FullCard> {
     try {
       this.validateIssueId(issueId);
+      this.trackInteraction();
 
       // Single fast query for one issue
       const result = await this.execBd(['show', '--json', issueId]);
@@ -745,6 +749,7 @@ export class DaemonBeadsAdapter {
   public async getIssueComments(issueId: string): Promise<Comment[]> {
     try {
       this.validateIssueId(issueId);
+      this.trackInteraction();
       // Fetch full issue details including comments
       const result = await this.execBd(['show', '--json', issueId]);
 
@@ -778,6 +783,7 @@ export class DaemonBeadsAdapter {
    */
   public async getColumnCount(column: string): Promise<number> {
     try {
+      this.trackInteraction();
       // Use bd stats --json for instant counts (no issue loading required)
       const stats = await this.execBd(['stats', '--json']);
 
@@ -863,6 +869,7 @@ export class DaemonBeadsAdapter {
     limit: number = 50
   ): Promise<BoardCard[]> {
     try {
+      this.trackInteraction();
       let basicIssues: any[];
 
       switch (column) {
@@ -1017,6 +1024,7 @@ export class DaemonBeadsAdapter {
         limit: number
     ): Promise<{ cards: BoardCard[]; totalCount: number }> {
         await this.ensureConnected();
+        this.trackInteraction();
 
         this.output.appendLine(`[DaemonBeadsAdapter] getTableData: offset=${offset}, limit=${limit}, filters=${JSON.stringify(filters)}, sorting=${JSON.stringify(sorting)}`);
 
@@ -1604,7 +1612,6 @@ export class DaemonBeadsAdapter {
    */
   public dispose(): void {
     this.cancelCircuitRecovery();
-    this.boardCache = null;
     this.output.appendLine('[DaemonBeadsAdapter] Disposed');
   }
 }

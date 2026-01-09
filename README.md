@@ -1,52 +1,81 @@
-# Beads Kanban
+# Beads - AI-Native Issue Tracking
 
-A VS Code extension that provides a Kanban board for issues stored in a `.beads` SQLite database, with an optional daemon-backed adapter that uses the `bd` CLI.
+Welcome to Beads! This repository uses **Beads** for issue tracking - a modern, AI-native tool designed to live directly in your codebase alongside your code.
 
-## Features
+## What is Beads?
 
-- **Columns**: Ready, In Progress, Blocked, Closed. Ready maps to `open` issues that appear in the `ready_issues` view; open issues that are not ready are shown in Blocked.
-- **Drag-and-drop**: Move issues between columns to update their status.
-- **Unified create/edit dialog**:
-  - Fields: title, description, acceptance criteria, design, notes, status, priority, type, assignee, estimate, external ref, due/defer dates.
-  - Markdown preview for long-text fields.
-- **Comments**: View and add comments.
-- **Labels and dependencies**: Parent-child and blocks relationships with unlink actions.
-- **Filtering**: Priority, type, and search filters.
-- **Context actions**: Add to Chat and Copy Context.
-- **Flags and scheduling**: Pinned/template/ephemeral badges and due/defer indicators.
-- **Daemon status bar**: Status, health, restart/stop, and logs when daemon integration is enabled.
+Beads is issue tracking that lives in your repo, making it perfect for AI coding agents and developers who want their issues close to their code. No web UI required - everything works through the CLI and integrates seamlessly with git.
 
-## Usage
+**Learn more:** [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
 
-1. Open the board: `Beads: Open Kanban Board` from the Command Palette.
-2. Create an issue: click **New**.
-3. Edit an issue: click a card to open the detail dialog.
-   - Use **Preview** to render Markdown fields.
-   - Scroll to **Comments** to post a new comment.
-   - Use **Labels** and **Structure** sections to manage tags and dependencies.
+## Quick Start
 
-## Configuration
+### Essential Commands
 
-- `beadsKanban.readOnly`: Disable mutations (create/move/update).
-- `beadsKanban.useDaemonAdapter`: Use the `bd` daemon adapter instead of the in-memory SQLite adapter (requires `bd` daemon).
+```bash
+# Create new issues
+bd create "Add user authentication"
 
-## Data Sources and Adapters
+# View all issues
+bd list
 
-### Default adapter (sql.js)
-- Loads `.beads/*.db` into memory via sql.js.
-- Executes queries in-memory and writes changes back to disk with a debounced, atomic save.
-- Watches `.beads/**/*.db` for external changes and reloads the DB.
+# View issue details
+bd show <issue-id>
 
-### Daemon adapter (bd CLI)
-- Uses `bd list --json` and `bd show --json` to fetch issue data.
-- Uses `bd` commands for create/update/move/comment/label/dependency operations.
-- Caches board data briefly to reduce CLI overhead.
+# Update issue status
+bd update <issue-id> --status in_progress
+bd update <issue-id> --status done
 
-## Development
+# Sync with git remote
+bd sync
+```
 
-- **Compile**: `npm run compile`
-- **Watch**: `npm run watch`
-- **Lint**: `npm run lint`
-- **Test**: `npm test`
+### Working with Issues
 
-Note: `npm run compile` currently relies on a `cp` command in `copy-deps`, so on Windows use a shell that provides `cp` (Git Bash or WSL) until the script is made cross-platform.
+Issues in Beads are:
+- **Git-native**: Stored in `.beads/issues.jsonl` and synced like code
+- **AI-friendly**: CLI-first design works perfectly with AI coding agents
+- **Branch-aware**: Issues can follow your branch workflow
+- **Always in sync**: Auto-syncs with your commits
+
+## Why Beads?
+
+✨ **AI-Native Design**
+- Built specifically for AI-assisted development workflows
+- CLI-first interface works seamlessly with AI coding agents
+- No context switching to web UIs
+
+🚀 **Developer Focused**
+- Issues live in your repo, right next to your code
+- Works offline, syncs when you push
+- Fast, lightweight, and stays out of your way
+
+🔧 **Git Integration**
+- Automatic sync with git commits
+- Branch-aware issue tracking
+- Intelligent JSONL merge resolution
+
+## Get Started with Beads
+
+Try Beads in your own projects:
+
+```bash
+# Install Beads
+curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+
+# Initialize in your repo
+bd init
+
+# Create your first issue
+bd create "Try out Beads"
+```
+
+## Learn More
+
+- **Documentation**: [github.com/steveyegge/beads/docs](https://github.com/steveyegge/beads/tree/main/docs)
+- **Quick Start Guide**: Run `bd quickstart`
+- **Examples**: [github.com/steveyegge/beads/examples](https://github.com/steveyegge/beads/tree/main/examples)
+
+---
+
+*Beads: Issue tracking that moves at the speed of thought* ⚡

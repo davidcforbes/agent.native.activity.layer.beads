@@ -1,13 +1,13 @@
 # Adapter Integration Test Report
 
-**Generated:** 2026-01-07T17:37:09.538Z
+**Generated:** 2026-01-08T03:12:21.344Z
 
-**BD Version:** `bd version 0.45.0 (dev: main@b7358f17bfb1)`
+**BD Version:** `bd version 0.46.0 (dev: main@2d45b8316993)`
 
 ## Summary
 
-- ✓ Passed: 12
-- ✗ Failed: 5
+- ✓ Passed: 6
+- ✗ Failed: 11
 - ⚠ Warnings: 0
 - Total: 17
 
@@ -16,13 +16,45 @@
 ### Create issue with all fields
 
 **Error:** `Create failed: Command failed: bd create --title "ADAPTER_TEST All Fields" --description "Test description with **markdown**" --priority 1 --type bug --assignee TestUser --estimate 120 --acceptance "Test acceptance criteria" --design "Test design notes" --notes "Test notes" --external-ref TEST-123 --due 2026-01-25 --defer 2026-01-20 --json
-Error: operation failed: failed to create issue: record creation event: failed to record event: sqlite3: constraint failed: FOREIGN KEY constraint failed
+Warning: Daemon took too long to start (>5s). Running in direct mode.
+  Hint: Run 'bd doctor' to diagnose daemon issues
+Error: record creation event: failed to record event: sqlite3: constraint failed: FOREIGN KEY constraint failed
 `
+
+
+### Create issue with ISO 8601 date format
+
+**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-a700 --no-daemon --json`
+
+
+### Update issue title
+
+**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-rlhz --no-daemon --json`
+
+
+### Update issue description
+
+**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-rlhz --no-daemon --json`
+
+
+### Update issue due date
+
+**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-rlhz --no-daemon --json`
+
+
+### Update issue status
+
+**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-rlhz --no-daemon --json`
+
+
+### Update multiple fields simultaneously
+
+**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-rlhz --no-daemon --json`
 
 
 ### Update with null assignee (unassign)
 
-**Error:** `Update failed: Command failed: bd update agent.native.activity.layer.beads-kzzi --no-daemon --assignee 
+**Error:** `Update failed: Command failed: bd update agent.native.activity.layer.beads-ggyo --no-daemon --assignee 
 Error: flag needs an argument: --assignee
 Usage:
   bd update [id...] [flags]
@@ -77,7 +109,7 @@ Global Flags:
 
 ### Clear optional field with empty string
 
-**Error:** `Update failed: Command failed: bd update agent.native.activity.layer.beads-43mx --no-daemon --notes 
+**Error:** `Update failed: Command failed: bd update agent.native.activity.layer.beads-lh77 --no-daemon --notes 
 Error: flag needs an argument: --notes
 Usage:
   bd update [id...] [flags]
@@ -127,21 +159,21 @@ Global Flags:
 
 ### Valid issue types accepted
 
-**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-2v83 --no-daemon --json`
+**Error:** `Failed to show issue: Command failed: bd show agent.native.activity.layer.beads-3209 --no-daemon --json`
 
 
 ## Detailed Test Results
 
 1. ✓ **Create issue with minimal fields (title only)**
 2. ✗ **Create issue with all fields**
-3. ✓ **Create issue with ISO 8601 date format**
+3. ✗ **Create issue with ISO 8601 date format**
 4. ✓ **Create issue with non-default status**
-5. ✓ **Update issue title**
-6. ✓ **Update issue description**
+5. ✗ **Update issue title**
+6. ✗ **Update issue description**
 7. ✓ **Update issue priority**
-8. ✓ **Update issue due date**
-9. ✓ **Update issue status**
-10. ✓ **Update multiple fields simultaneously**
+8. ✗ **Update issue due date**
+9. ✗ **Update issue status**
+10. ✗ **Update multiple fields simultaneously**
 11. ✓ **Create with empty title should fail**
 12. ✗ **Update with null assignee (unassign)**
 13. ✗ **Handle special characters in fields**

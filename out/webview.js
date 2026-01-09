@@ -37,7 +37,7 @@ exports.getWebviewHtml = getWebviewHtml;
 const vscode = __importStar(require("vscode"));
 const crypto = __importStar(require("crypto"));
 function getWebviewHtml(webview, extensionUri) {
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "main.js"));
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "board.js"));
     const sortableUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "Sortable.min.js"));
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "styles.css"));
     const dompurifyUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "purify.min.js"));
@@ -59,8 +59,8 @@ function getWebviewHtml(webview, extensionUri) {
   -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
-                 img-src ${webview.cspSource};
-                 style-src ${webview.cspSource};
+                 img-src ${webview.cspSource} data:;
+                 style-src ${webview.cspSource} 'unsafe-inline';
                  script-src 'nonce-${nonce}';
                  connect-src ${webview.cspSource};
                  base-uri 'none';
@@ -103,6 +103,21 @@ function getWebviewHtml(webview, extensionUri) {
            <option value="epic">Epic</option>
            <option value="chore">Chore</option>
         </select>
+        <div class="status-filter-wrapper">
+          <button id="filterStatusBtn" class="select status-filter-btn" type="button" title="Filter by status">
+            <span id="filterStatusLabel">Status: All</span>
+            <span class="dropdown-arrow">▼</span>
+          </button>
+          <div id="filterStatusDropdown" class="status-dropdown hidden">
+            <label class="status-option"><input type="checkbox" value="open" /> Open</label>
+            <label class="status-option"><input type="checkbox" value="in_progress" /> In Progress</label>
+            <label class="status-option"><input type="checkbox" value="blocked" /> Blocked</label>
+            <label class="status-option"><input type="checkbox" value="deferred" /> Deferred</label>
+            <label class="status-option"><input type="checkbox" value="closed" /> Closed</label>
+            <label class="status-option"><input type="checkbox" value="tombstone" /> Tombstone</label>
+            <label class="status-option"><input type="checkbox" value="pinned" /> Pinned</label>
+          </div>
+        </div>
         <button id="clearFiltersBtn" class="btn" title="Clear all filters">Clear Filters</button>
       </div>
       <button id="refreshBtn" class="btn" title="Refresh board (${modKey}+R)">Refresh</button>

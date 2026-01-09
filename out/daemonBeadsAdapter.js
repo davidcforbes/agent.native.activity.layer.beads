@@ -43,9 +43,8 @@ const child_process_1 = require("child_process");
 class DaemonBeadsAdapter {
     workspaceRoot;
     output;
-    boardCache = null;
-    cacheTimestamp = 0;
     lastMutationTime = 0;
+    lastInteractionTime = 0;
     // Circuit breaker state for batch failure recovery
     circuitBreakerState = 'CLOSED';
     consecutiveFailures = 0;
@@ -74,6 +73,31 @@ class DaemonBeadsAdapter {
             .replace(/\s+/g, ' ')
             // Trim leading/trailing whitespace
             .trim();
+    }
+    /**
+     * Validates issue ID to prevent command injection
+     * @param issueId Issue ID to validate
+     * @throws Error if issue ID is invalid or potentially dangerous
+     */
+    validateIssueId(issueId) {
+        if (typeof issueId !== 'string' || !issueId) {
+            throw new Error('Issue ID must be a non-empty string');
+        }
+        // Prevent flag injection - IDs starting with hyphens could be interpreted as CLI flags
+        if (issueId.startsWith('-')) {
+            throw new Error(`Invalid issue ID: cannot start with hyphen (${issueId})`);
+        }
+        // Validate format: beads-xxxx or project.beads-xxxx
+        // This prevents arbitrary strings from being passed to bd commands
+        const validPattern = /^([a-z0-9._-]+\.)?beads-[a-z0-9]+$/i;
+        if (!validPattern.test(issueId)) {
+            throw new Error(`Invalid issue ID format: ${issueId}. Expected format: beads-xxxx or project.beads-xxxx`);
+        }
+        // Defense in depth: reject shell metacharacters
+        const dangerousChars = /[;&|`$(){}[\]<>\\'"]/;
+        if (dangerousChars.test(issueId)) {
+            throw new Error(`Invalid issue ID: contains dangerous characters (${issueId})`);
+        }
     }
     /**
      * Check if the circuit breaker is currently open.
@@ -295,38 +319,42 @@ class DaemonBeadsAdapter {
      * Reload database (no-op for daemon adapter, always reads from daemon)
      */
     async reloadDatabase() {
-        // Invalidate cache to force fresh data on next getBoard()
-        this.boardCache = null;
-        this.cacheTimestamp = 0;
-        this.output.appendLine('[DaemonBeadsAdapter] Cache invalidated');
+        // Database reload - daemon automatically provides fresh data
+        this.output.appendLine('[DaemonBeadsAdapter] Database reload requested');
     }
     /**
      * Track that a mutation occurred and invalidate cache
      */
     trackMutation() {
         this.lastMutationTime = Date.now();
-        this.boardCache = null;
     }
     /**
-     * No-op for daemon adapter (not needed for external save detection)
+     * Track that an interaction (read or write) occurred that might touch the DB file
+     */
+    trackInteraction() {
+        this.lastInteractionTime = Date.now();
+    }
+    /**
+     * Check if we recently modified or interacted with the DB
+     * This is used to suppress file watcher loops
      */
     isRecentSelfSave() {
-        // Consider a mutation "recent" if it happened within the last 3 seconds
-        // This accounts for: bd command execution (~500ms), file write, file watcher debounce (300ms), and buffer
-        // Increased from 2s to 3s to prevent edge-case race conditions
-        return (Date.now() - this.lastMutationTime) < 3000;
+        // Consider a mutation/interaction "recent" if it happened within the last 5 seconds
+        const now = Date.now();
+        const mutationDiff = now - this.lastMutationTime;
+        const interactionDiff = now - this.lastInteractionTime;
+        const isRecent = (mutationDiff < 5000) || (interactionDiff < 5000);
+        if (isRecent) {
+            this.output.appendLine(`[DaemonBeadsAdapter] isRecentSelfSave: TRUE (mutation: ${mutationDiff}ms, interaction: ${interactionDiff}ms)`);
+        }
+        return isRecent;
     }
     /**
      * Get board data from bd daemon
      */
     async getBoard() {
-        // Configurable cache TTL to reduce CLI overhead (default: 5 seconds)
-        const cacheTTL = vscode.workspace.getConfiguration('beadsKanban').get('daemonCacheTTL', 5000);
-        const now = Date.now();
-        if (this.boardCache && (now - this.cacheTimestamp) < cacheTTL) {
-            this.output.appendLine(`[DaemonBeadsAdapter] Returning cached board data (age: ${now - this.cacheTimestamp}ms)`);
-            return this.boardCache;
-        }
+        this.trackInteraction();
+        // Load fresh data from daemon
         // Read pagination limit from configuration
         const maxIssues = vscode.workspace.getConfiguration('beadsKanban').get('maxIssues', 1000);
         try {
@@ -344,8 +372,6 @@ class DaemonBeadsAdapter {
                     ],
                     cards: []
                 };
-                this.boardCache = emptyBoard;
-                this.cacheTimestamp = Date.now();
                 return emptyBoard;
             }
             // Check if we hit the pagination limit
@@ -414,8 +440,6 @@ class DaemonBeadsAdapter {
                 }
             }
             const boardData = this.mapIssuesToBoardData(detailedIssues);
-            this.boardCache = boardData;
-            this.cacheTimestamp = Date.now();
             return boardData;
         }
         catch (error) {
@@ -423,11 +447,243 @@ class DaemonBeadsAdapter {
         }
     }
     /**
+     * NEW: Get minimal board data for fast initial load (Tier 1)
+     * Uses single bd list query without bd show - expected 100-300ms for 400 issues
+     * Returns only essential fields for displaying cards in kanban columns
+     */
+    async getBoardMinimal() {
+        try {
+            this.trackInteraction();
+            // Single fast query - no batching needed
+            const issues = await this.execBd(['list', '--json', '--all', '--limit', '10000']);
+            if (!Array.isArray(issues)) {
+                this.output.appendLine('[DaemonBeadsAdapter] getBoardMinimal: bd list returned non-array');
+                return [];
+            }
+            // Map to EnrichedCard - includes labels, assignee for better card display
+            const enrichedCards = issues.map((issue) => ({
+                id: issue.id,
+                title: issue.title || '',
+                description: issue.description || '',
+                status: issue.status || 'open',
+                priority: typeof issue.priority === 'number' ? issue.priority : 2,
+                issue_type: issue.issue_type || 'task',
+                created_at: issue.created_at || new Date().toISOString(),
+                created_by: issue.created_by || 'unknown',
+                updated_at: issue.updated_at || issue.created_at || new Date().toISOString(),
+                closed_at: issue.closed_at || null,
+                close_reason: issue.close_reason || null,
+                dependency_count: issue.dependency_count || 0,
+                dependent_count: issue.dependent_count || 0,
+                assignee: issue.assignee || null,
+                estimated_minutes: issue.estimated_minutes || null,
+                labels: Array.isArray(issue.labels) ? issue.labels : [],
+                external_ref: issue.external_ref || null,
+                pinned: issue.pinned || false,
+                blocked_by_count: issue.blocked_by_count || 0
+            }));
+            this.output.appendLine(`[DaemonBeadsAdapter] getBoardMinimal: Loaded ${enrichedCards.length} enriched cards`);
+            return enrichedCards;
+        }
+        catch (error) {
+            throw new Error(`Failed to get minimal board data: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    /**
+     * NEW: Get full details for a single issue on-demand (Tier 3)
+     * Uses single bd show query - expected 50ms per issue
+     * Returns all fields including relationships, comments, and event/agent metadata
+     */
+    async getIssueFull(issueId) {
+        try {
+            this.validateIssueId(issueId);
+            this.trackInteraction();
+            // Single fast query for one issue
+            const result = await this.execBd(['show', '--json', issueId]);
+            if (!Array.isArray(result) || result.length === 0) {
+                throw new Error(`Issue not found: ${issueId}`);
+            }
+            const issue = result[0];
+            // Build dependency information
+            const parent = this.extractParentDependency(issue);
+            const children = this.extractChildrenDependencies(issue);
+            const blocks = this.extractBlocksDependencies(issue);
+            const blocked_by = this.extractBlockedByDependencies(issue);
+            // Map labels
+            let labels = [];
+            if (issue.labels && Array.isArray(issue.labels)) {
+                labels = issue.labels.map((l) => typeof l === 'string' ? l : l.label);
+            }
+            // Map comments
+            const comments = [];
+            if (issue.comments && Array.isArray(issue.comments)) {
+                comments.push(...issue.comments.map((c) => ({
+                    id: c.id,
+                    issue_id: issueId,
+                    author: c.author || 'unknown',
+                    text: c.text || '',
+                    created_at: c.created_at
+                })));
+            }
+            const fullCard = {
+                // MinimalCard fields
+                id: issue.id,
+                title: issue.title || '',
+                description: issue.description || '',
+                status: issue.status || 'open',
+                priority: typeof issue.priority === 'number' ? issue.priority : 2,
+                issue_type: issue.issue_type || 'task',
+                created_at: issue.created_at || new Date().toISOString(),
+                created_by: issue.created_by || 'unknown',
+                updated_at: issue.updated_at || issue.created_at || new Date().toISOString(),
+                closed_at: issue.closed_at || null,
+                close_reason: issue.close_reason || null,
+                dependency_count: issue.dependency_count || 0,
+                dependent_count: issue.dependent_count || 0,
+                // EnrichedCard fields
+                assignee: issue.assignee || null,
+                estimated_minutes: issue.estimated_minutes || null,
+                labels,
+                external_ref: issue.external_ref || null,
+                pinned: issue.pinned === 1 || issue.pinned === true,
+                blocked_by_count: blocked_by.length,
+                // FullCard fields
+                acceptance_criteria: issue.acceptance_criteria || '',
+                design: issue.design || '',
+                notes: issue.notes || '',
+                due_at: issue.due_at || null,
+                defer_until: issue.defer_until || null,
+                is_ready: issue.status === 'open' && blocked_by.length === 0,
+                is_template: issue.is_template === 1 || issue.is_template === true,
+                ephemeral: issue.ephemeral === 1 || issue.ephemeral === true,
+                // Event/Agent metadata
+                event_kind: issue.event_kind || null,
+                actor: issue.actor || null,
+                target: issue.target || null,
+                payload: issue.payload || null,
+                sender: issue.sender || null,
+                mol_type: issue.mol_type || null,
+                role_type: issue.role_type || null,
+                rig: issue.rig || null,
+                agent_state: issue.agent_state || null,
+                last_activity: issue.last_activity || null,
+                hook_bead: issue.hook_bead || null,
+                role_bead: issue.role_bead || null,
+                await_type: issue.await_type || null,
+                await_id: issue.await_id || null,
+                timeout_ns: issue.timeout_ns || null,
+                waiters: issue.waiters || null,
+                // Relationships
+                parent,
+                children,
+                blocks,
+                blocked_by,
+                comments
+            };
+            this.output.appendLine(`[DaemonBeadsAdapter] getIssueFull: Loaded full details for ${issueId}`);
+            return fullCard;
+        }
+        catch (error) {
+            throw new Error(`Failed to get full issue details: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    /**
+     * Extract parent dependency from issue data
+     */
+    extractParentDependency(issue) {
+        if (!issue.dependents || !Array.isArray(issue.dependents)) {
+            return undefined;
+        }
+        // Find parent-child dependency where this issue is the child
+        for (const dep of issue.dependents) {
+            if (dep.dependency_type === 'parent-child' && dep.id !== issue.id) {
+                return {
+                    id: dep.id,
+                    title: dep.title,
+                    created_at: dep.created_at,
+                    created_by: dep.created_by || 'unknown',
+                    metadata: dep.metadata,
+                    thread_id: dep.thread_id
+                };
+            }
+        }
+        return undefined;
+    }
+    /**
+     * Extract children dependencies from issue data
+     */
+    extractChildrenDependencies(issue) {
+        const children = [];
+        if (!issue.dependents || !Array.isArray(issue.dependents)) {
+            return children;
+        }
+        for (const dep of issue.dependents) {
+            if (dep.dependency_type === 'parent-child' && dep.id !== issue.id) {
+                children.push({
+                    id: dep.id,
+                    title: dep.title,
+                    created_at: dep.created_at,
+                    created_by: dep.created_by || 'unknown',
+                    metadata: dep.metadata,
+                    thread_id: dep.thread_id
+                });
+            }
+        }
+        return children;
+    }
+    /**
+     * Extract blocks dependencies from issue data
+     */
+    extractBlocksDependencies(issue) {
+        const blocks = [];
+        if (!issue.dependents || !Array.isArray(issue.dependents)) {
+            return blocks;
+        }
+        for (const dep of issue.dependents) {
+            if (dep.dependency_type === 'blocks' && dep.id !== issue.id) {
+                blocks.push({
+                    id: dep.id,
+                    title: dep.title,
+                    created_at: dep.created_at,
+                    created_by: dep.created_by || 'unknown',
+                    metadata: dep.metadata,
+                    thread_id: dep.thread_id
+                });
+            }
+        }
+        return blocks;
+    }
+    /**
+     * Extract blocked_by dependencies from issue data
+     */
+    extractBlockedByDependencies(issue) {
+        // Note: bd show returns "dependents" which are issues that depend on THIS issue
+        // To get blocked_by, we need to look at dependencies where this issue is blocked
+        // This information might not be in the response, so we return empty for now
+        // TODO: Check if bd show provides this information
+        return [];
+    }
+    /**
+     * Get board metadata (columns only, no cards) for incremental loading
+     */
+    async getBoardMetadata() {
+        const columns = [
+            { key: 'ready', title: 'Ready' },
+            { key: 'in_progress', title: 'In Progress' },
+            { key: 'blocked', title: 'Blocked' },
+            { key: 'closed', title: 'Closed' }
+        ];
+        // Return only columns, no cards - cards will be loaded via getColumnData
+        return { columns, cards: [] };
+    }
+    /**
      * Get comments for a specific issue (lazy-loaded on demand).
      * This method is called when the user opens the detail dialog for an issue.
      */
     async getIssueComments(issueId) {
         try {
+            this.validateIssueId(issueId);
+            this.trackInteraction();
             // Fetch full issue details including comments
             const result = await this.execBd(['show', '--json', issueId]);
             if (!Array.isArray(result) || result.length === 0) {
@@ -453,31 +709,59 @@ class DaemonBeadsAdapter {
     }
     /**
      * Get the count of issues in a specific column.
-     * Uses bd CLI commands to query column-specific counts.
+     * Uses bd stats for O(1) performance instead of loading all issues.
      */
     async getColumnCount(column) {
+        try {
+            this.trackInteraction();
+            // Use bd stats --json for instant counts (no issue loading required)
+            const stats = await this.execBd(['stats', '--json']);
+            if (!stats || !stats.summary) {
+                this.output.appendLine('[DaemonBeadsAdapter] bd stats returned invalid data, falling back to list queries');
+                return this.getColumnCountFallback(column);
+            }
+            const summary = stats.summary;
+            switch (column) {
+                case 'ready':
+                    return summary.ready_issues || 0;
+                case 'in_progress':
+                    return summary.in_progress_issues || 0;
+                case 'blocked':
+                    return summary.blocked_issues || 0;
+                case 'closed':
+                    return summary.closed_issues || 0;
+                case 'open':
+                    return summary.open_issues || 0;
+                default:
+                    throw new Error(`Unknown column: ${column}`);
+            }
+        }
+        catch (error) {
+            this.output.appendLine(`[DaemonBeadsAdapter] bd stats failed: ${error}, falling back to list queries`);
+            return this.getColumnCountFallback(column);
+        }
+    }
+    /**
+     * Fallback method for getColumnCount when bd stats is unavailable
+     * (for older bd versions or when stats fails)
+     */
+    async getColumnCountFallback(column) {
         try {
             let result;
             switch (column) {
                 case 'ready':
-                    // Use bd ready to get issues with no blockers
-                    result = await this.execBd(['ready', '--json', '--limit', '0']); // 0 = unlimited
+                    result = await this.execBd(['ready', '--json', '--limit', '0']);
                     break;
                 case 'in_progress':
-                    // Use bd list with status filter
                     result = await this.execBd(['list', '--status=in_progress', '--json', '--limit', '0']);
                     break;
                 case 'blocked':
-                    // IMPROVEMENT: Use bd list --status=blocked instead of bd blocked
-                    // This is more efficient and consistent with getColumnData
                     result = await this.execBd(['list', '--status=blocked', '--json', '--limit', '0']);
                     break;
                 case 'closed':
-                    // Use bd list with status filter
                     result = await this.execBd(['list', '--status=closed', '--json', '--limit', '0']);
                     break;
                 case 'open':
-                    // Use bd list with status filter
                     result = await this.execBd(['list', '--status=open', '--json', '--limit', '0']);
                     break;
                 default:
@@ -496,6 +780,7 @@ class DaemonBeadsAdapter {
      */
     async getColumnData(column, offset = 0, limit = 50) {
         try {
+            this.trackInteraction();
             let basicIssues;
             switch (column) {
                 case 'ready':
@@ -512,6 +797,10 @@ class DaemonBeadsAdapter {
                 case 'in_progress':
                     // Use bd list with status filter
                     // LIMITATION: bd list supports --limit but not --offset
+                    // TODO: Add --offset flag to bd CLI for efficient pagination (see beads issue agent.native.activity.layer.beads-6u4m)
+                    if (offset > 500) {
+                        this.output.appendLine(`[DaemonBeadsAdapter] Warning: Large offset (${offset}) for in_progress column may cause performance issues`);
+                    }
                     const inProgressResult = await this.execBd(['list', '--status=in_progress', '--json', '--limit', String(offset + limit)]);
                     basicIssues = Array.isArray(inProgressResult) ? inProgressResult.slice(offset, offset + limit) : [];
                     break;
@@ -527,11 +816,19 @@ class DaemonBeadsAdapter {
                     break;
                 case 'closed':
                     // Use bd list with status filter (supports --limit)
+                    // LIMITATION: bd list supports --limit but not --offset
+                    if (offset > 500) {
+                        this.output.appendLine(`[DaemonBeadsAdapter] Warning: Large offset (${offset}) for closed column may cause performance issues`);
+                    }
                     const closedResult = await this.execBd(['list', '--status=closed', '--json', '--limit', String(offset + limit)]);
                     basicIssues = Array.isArray(closedResult) ? closedResult.slice(offset, offset + limit) : [];
                     break;
                 case 'open':
                     // Use bd list with status filter (supports --limit)
+                    // LIMITATION: bd list supports --limit but not --offset
+                    if (offset > 500) {
+                        this.output.appendLine(`[DaemonBeadsAdapter] Warning: Large offset (${offset}) for open column may cause performance issues`);
+                    }
                     const openResult = await this.execBd(['list', '--status=open', '--json', '--limit', String(offset + limit)]);
                     basicIssues = Array.isArray(openResult) ? openResult.slice(offset, offset + limit) : [];
                     break;
@@ -594,7 +891,7 @@ class DaemonBeadsAdapter {
             }
             // Map to BoardCard format using existing helper
             const boardData = this.mapIssuesToBoardData(detailedIssues);
-            return boardData.cards;
+            return boardData.cards || [];
         }
         catch (error) {
             this.output.appendLine(`[DaemonBeadsAdapter] Failed to get column data for ${column}: ${error instanceof Error ? error.message : String(error)}`);
@@ -613,10 +910,11 @@ class DaemonBeadsAdapter {
      */
     async getTableData(filters, sorting, offset, limit) {
         await this.ensureConnected();
+        this.trackInteraction();
         this.output.appendLine(`[DaemonBeadsAdapter] getTableData: offset=${offset}, limit=${limit}, filters=${JSON.stringify(filters)}, sorting=${JSON.stringify(sorting)}`);
         // Get all issues from board (uses cache if available)
         const board = await this.getBoard();
-        let allCards = board.cards;
+        let allCards = board.cards || [];
         this.output.appendLine(`[DaemonBeadsAdapter] Fetched ${allCards.length} total cards from board`);
         // Apply filters
         if (filters.search || filters.priority || filters.type || filters.status || filters.assignee || filters.labels) {
@@ -963,6 +1261,19 @@ class DaemonBeadsAdapter {
                 await this.execBd(['update', issueId, ...updateArgs]);
                 this.trackMutation();
             }
+            // Set children (add parent-child relationship from child side)
+            if (input.children_ids && input.children_ids.length > 0) {
+                for (const childId of input.children_ids) {
+                    try {
+                        await this.execBd(['dep', 'add', childId, issueId, '--type', 'parent-child']);
+                        this.trackMutation();
+                    }
+                    catch (childErr) {
+                        this.output.appendLine(`[DaemonBeadsAdapter] WARNING: Failed to set parent on child ${childId}: ${childErr}`);
+                        // Don't fail the whole operation if a child link fails
+                    }
+                }
+            }
             return { id: issueId };
         }
         catch (error) {
@@ -976,6 +1287,7 @@ class DaemonBeadsAdapter {
      */
     async setIssueStatus(id, toStatus) {
         try {
+            this.validateIssueId(id);
             await this.execBd(['update', id, '--status', toStatus]);
             // Track mutation and invalidate cache
             this.trackMutation();
@@ -990,6 +1302,7 @@ class DaemonBeadsAdapter {
      * Update issue fields using bd CLI
      */
     async updateIssue(id, updates) {
+        this.validateIssueId(id);
         const args = ['update', id, '--no-daemon']; // Use --no-daemon to bypass daemon bug with --due flag
         if (updates.title !== undefined)
             args.push('--title', updates.title);
@@ -1049,6 +1362,7 @@ class DaemonBeadsAdapter {
      */
     async addComment(issueId, text, author) {
         try {
+            this.validateIssueId(issueId);
             // bd comments add expects text as positional argument, not --text flag
             await this.execBd(['comments', 'add', issueId, text, '--author', author]);
             // Track mutation and invalidate cache
@@ -1065,6 +1379,7 @@ class DaemonBeadsAdapter {
      */
     async addLabel(issueId, label) {
         try {
+            this.validateIssueId(issueId);
             await this.execBd(['label', 'add', issueId, label]);
             // Track mutation and invalidate cache
             this.trackMutation();
@@ -1080,6 +1395,7 @@ class DaemonBeadsAdapter {
      */
     async removeLabel(issueId, label) {
         try {
+            this.validateIssueId(issueId);
             await this.execBd(['label', 'remove', issueId, label]);
             // Track mutation and invalidate cache
             this.trackMutation();
@@ -1095,6 +1411,8 @@ class DaemonBeadsAdapter {
      */
     async addDependency(issueId, dependsOnId, type = 'blocks') {
         try {
+            this.validateIssueId(issueId);
+            this.validateIssueId(dependsOnId);
             await this.execBd(['dep', 'add', issueId, dependsOnId, '--type', type]);
             // Track mutation and invalidate cache
             this.trackMutation();
@@ -1110,6 +1428,8 @@ class DaemonBeadsAdapter {
      */
     async removeDependency(issueId, dependsOnId) {
         try {
+            this.validateIssueId(issueId);
+            this.validateIssueId(dependsOnId);
             await this.execBd(['dep', 'remove', issueId, dependsOnId]);
             // Track mutation and invalidate cache
             this.trackMutation();
@@ -1125,7 +1445,6 @@ class DaemonBeadsAdapter {
      */
     dispose() {
         this.cancelCircuitRecovery();
-        this.boardCache = null;
         this.output.appendLine('[DaemonBeadsAdapter] Disposed');
     }
 }

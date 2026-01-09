@@ -93,12 +93,22 @@ If tests require a seeded `.beads` DB:
    - Validate column distribution (Ready/In Progress/Blocked/Closed).
    - Verify search, type, and priority filters.
 
-2. **CRUD and Status Changes**
-   - Create new issues from UI and confirm persistence.
-   - Update title/description/priority/type/assignee/estimate.
+2. **CRUD and Status Changes (Unified Dialog)**
+   - Create new issues using the unified dialog (Create Mode).
+   - Edit existing issues using the same dialog (Edit Mode).
+   - Verify specific behavior for Create Mode (disabled relationship/comment sections until created).
+   - Update title/description/priority/type/assignee/estimate/dates.
    - Move issues between columns; confirm status updates.
 
-3. **Relationships and Labels**
+3. **Table View**
+   - Toggle between Kanban and Table views.
+   - Verify data consistency between views.
+   - **Sorting**: Single column (click), Multi-column (Shift+click), default sort (Updated desc).
+   - **Filtering**: Search, Priority, Type, Status (Active/Blocked/Closed/All), Assignee, Labels.
+   - **Interaction**: Row click opens detail dialog; ID click copies to clipboard.
+   - **Loading**: "Load More" works correctly in Table view (loads across columns).
+
+4. **Relationships and Labels**
    - Add/remove labels.
    - Add/remove parent-child and blocks dependencies.
    - Verify blocked_by/blocks/children are rendered correctly.
@@ -168,3 +178,4 @@ Each script below maps to a tracked beads task labeled `#testscript`.
 5. Error handling and recovery paths
 6. Performance on large datasets
 7. Read-only mode and UX feedback
+8. Table View features (Sorting, Filtering, Loading)

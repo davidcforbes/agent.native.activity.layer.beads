@@ -63,94 +63,6 @@ function validateBoardCards(cards, output) {
         }, output);
     }
 }
-/**
- * Converts technical errors into user-friendly messages with actionable guidance.
- * Categorizes common failure scenarios and provides specific solutions.
- */
-function getUserFriendlyErrorMessage(error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const lowerMsg = errorMsg.toLowerCase();
-    // No .beads directory
-    if (lowerMsg.includes('enoent') || lowerMsg.includes('no .beads directory') || lowerMsg.includes('cannot find')) {
-        return 'No .beads directory found. Run `bd init` in your workspace to create one, or open a workspace that contains a .beads directory.';
-    }
-    // Database locked
-    if (lowerMsg.includes('sqlite_busy') || lowerMsg.includes('database is locked') || lowerMsg.includes('database lock')) {
-        return 'Database is locked by another application. Close other apps using the database, or wait for them to finish.';
-    }
-    // Corrupted database
-    if (lowerMsg.includes('corrupt') || lowerMsg.includes('malformed') || lowerMsg.includes('not a database')) {
-        return 'Database appears to be corrupted. Run `bd doctor` to diagnose and repair, or restore from a backup.';
-    }
-    // Daemon not running (specific to daemon adapter)
-    if (lowerMsg.includes('daemon') && (lowerMsg.includes('not running') || lowerMsg.includes('connection refused') || lowerMsg.includes('econnrefused'))) {
-        return 'Beads daemon is not running. Start it with `bd daemon start`, or disable daemon mode in settings.';
-    }
-    // Permission denied
-    if (lowerMsg.includes('eacces') || lowerMsg.includes('permission denied')) {
-        return 'Permission denied accessing .beads directory. Check file permissions and ensure you have read/write access.';
-    }
-    // Out of space
-    if (lowerMsg.includes('enospc') || lowerMsg.includes('no space left')) {
-        return 'No space left on device. Free up disk space and try again.';
-    }
-    // Generic fallback with sanitized message
-    return `Failed to load board: ${(0, sanitizeError_1.sanitizeErrorWithContext)(error)}. Check the Output panel (Beads Kanban) for details.`;
-}
-/**
- * Converts Zod validation errors into user-friendly messages.
- * Parses technical Zod error structures and returns actionable guidance.
- */
-function formatZodError(zodError) {
-    if (!zodError.issues || zodError.issues.length === 0) {
-        return 'Invalid data provided';
-    }
-    const messages = zodError.issues.map((issue) => {
-        const field = issue.path.length > 0 ? issue.path.join('.') : 'field';
-        switch (issue.code) {
-            case 'invalid_type':
-                if (issue.received === 'undefined' || issue.received === 'null') {
-                    return `${field} is required`;
-                }
-                return `${field} must be a ${issue.expected}`;
-            case 'too_small':
-                if (issue.type === 'string') {
-                    return `${field} must be at least ${issue.minimum} characters`;
-                }
-                if (issue.type === 'number') {
-                    return `${field} must be at least ${issue.minimum}`;
-                }
-                return `${field} is too small`;
-            case 'too_big':
-                if (issue.type === 'string') {
-                    return `${field} must be at most ${issue.maximum} characters`;
-                }
-                if (issue.type === 'number') {
-                    return `${field} must be at most ${issue.maximum}`;
-                }
-                return `${field} is too large`;
-            case 'invalid_string':
-                if (issue.validation === 'email') {
-                    return `${field} must be a valid email address`;
-                }
-                if (issue.validation === 'url') {
-                    return `${field} must be a valid URL`;
-                }
-                if (issue.validation === 'datetime') {
-                    return `${field} must be a valid date/time`;
-                }
-                if (issue.validation === 'regex') {
-                    return `${field} format is invalid`;
-                }
-                return `${field} is not valid`;
-            case 'invalid_enum_value':
-                return `${field} must be one of: ${issue.options.join(', ')}`;
-            default:
-                return issue.message || `${field} is invalid`;
-        }
-    });
-    return messages.join('; ');
-}
 function activate(context) {
     const output = vscode.window.createOutputChannel("Beads Kanban");
     output.appendLine('[BeadsAdapter] Environment Versions: ' + JSON.stringify(process.versions, null, 2));
@@ -214,28 +126,18 @@ function activate(context) {
                             await daemonManager.start();
                             output.appendLine('[Extension] Daemon started successfully');
                             // Update status immediately after starting
-                            setTimeout(() => {
-                                updateDaemonStatus().catch(err => {
-                                    output.appendLine(`[Extension] Error updating daemon status after start: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
-                                });
-                            }, 1000); // Give daemon time to initialize
+                            setTimeout(updateDaemonStatus, 1000); // Give daemon time to initialize
                         }
                         catch (startError) {
                             output.appendLine(`[Extension] Failed to auto-start daemon: ${(0, sanitizeError_1.sanitizeErrorWithContext)(startError)}`);
                             // Show notification with option to start manually
                             vscode.window.showWarningMessage('Beads daemon is not running. The extension requires the daemon when configured to use DaemonBeadsAdapter.', 'Start Daemon', 'Disable Daemon Mode').then(action => {
                                 if (action === 'Start Daemon') {
-                                    vscode.commands.executeCommand('beadsKanban.showDaemonActions').then(undefined, err => {
-                                        output.appendLine(`[Extension] Error executing showDaemonActions command: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
-                                    });
+                                    vscode.commands.executeCommand('beadsKanban.showDaemonActions');
                                 }
                                 else if (action === 'Disable Daemon Mode') {
-                                    vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true).then(undefined, err => {
-                                        output.appendLine(`[Extension] Error disabling daemon mode: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
-                                    });
+                                    vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true);
                                 }
-                            }).then(undefined, err => {
-                                output.appendLine(`[Extension] Error in showWarningMessage handler: ${(0, sanitizeError_1.sanitizeErrorWithContext)(err)}`);
                             });
                         }
                     }
@@ -371,9 +273,8 @@ function activate(context) {
             loadedRanges.set('blocked', []);
             loadedRanges.set('closed', []);
             const post = (msg) => {
-                // Check both disposal flag and cancellation token to prevent race conditions
-                if (isDisposed || cancellationToken.cancelled) {
-                    output.appendLine(`[Extension] Attempted to post to disposed/cancelled webview: ${msg.type}`);
+                if (isDisposed) {
+                    output.appendLine(`[Extension] Attempted to post to disposed webview: ${msg.type}`);
                     return;
                 }
                 try {
@@ -382,7 +283,6 @@ function activate(context) {
                 catch (e) {
                     output.appendLine(`[Extension] Error posting message: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     isDisposed = true; // Mark as disposed if posting fails
-                    cancellationToken.cancelled = true; // Also cancel token
                 }
             };
             const sendBoard = async (requestId) => {
@@ -393,7 +293,22 @@ function activate(context) {
                 output.appendLine(`[Extension] sendBoard called with requestId: ${requestId}`);
                 initialLoadSent = true; // Mark that we've sent board data
                 try {
-                    // Read configuration settings for incremental loading
+                    // Phase 1-3: Prefer fast minimal loading if available
+                    const supportsFastLoading = typeof adapter.getBoardMinimal === 'function';
+                    if (supportsFastLoading) {
+                        output.appendLine(`[Extension] Using fast loading path (getBoardMinimal)`);
+                        const cards = await adapter.getBoardMinimal();
+                        output.appendLine(`[Extension] Loaded ${cards.length} minimal cards for refresh`);
+                        // Check cancellation before posting
+                        if (!cancellationToken.cancelled) {
+                            post({ type: "board.minimal", requestId, payload: { cards } });
+                        }
+                        else {
+                            output.appendLine(`[Extension] Skipped posting board.minimal - operation cancelled`);
+                        }
+                        return;
+                    }
+                    // Fallback: Read configuration settings for incremental loading
                     const config = vscode.workspace.getConfiguration('beadsKanban');
                     const initialLoadLimit = config.get('initialLoadLimit', 100);
                     const preloadClosedColumn = config.get('preloadClosedColumn', false);
@@ -467,7 +382,6 @@ function activate(context) {
                         // Use getBoardMetadata() instead of getBoard() to avoid loading all issues
                         const data = await adapter.getBoardMetadata();
                         data.columnData = columnDataMap;
-                        data.readOnly = readOnly; // Add read-only flag for webview
                         // Validate markdown content in column cards (defense-in-depth)
                         // Note: data.cards is now empty array from getBoardMetadata, actual cards are in columnData
                         // Also validate cards in columnData
@@ -490,7 +404,6 @@ function activate(context) {
                         // Fallback to legacy full load
                         output.appendLine(`[Extension] Adapter does not support incremental loading, using legacy getBoard()`);
                         const data = await adapter.getBoard();
-                        data.readOnly = readOnly; // Add read-only flag for webview
                         output.appendLine(`[Extension] Got board data: ${data.cards?.length || 0} cards`);
                         // Validate markdown content in all cards (defense-in-depth)
                         validateBoardCards(data.cards || [], output);
@@ -508,8 +421,7 @@ function activate(context) {
                     output.appendLine(`[Extension] Error in sendBoard: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     // Check both disposal flag and cancellation token
                     if (!isDisposed && !cancellationToken.cancelled) {
-                        // Use user-friendly error message for display, but log technical details
-                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+                        post({ type: "mutation.error", requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
                     }
                 }
             };
@@ -523,7 +435,7 @@ function activate(context) {
                     // Validate the request
                     const validation = types_1.BoardLoadColumnSchema.safeParse({ column, offset, limit });
                     if (!validation.success) {
-                        post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${formatZodError(validation.error)}` });
+                        post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${validation.error.message}` });
                         return;
                     }
                     // Load the column data
@@ -551,7 +463,7 @@ function activate(context) {
                     output.appendLine(`[Extension] Error in handleLoadColumn: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     // Check both disposal flag and cancellation token
                     if (!isDisposed && !cancellationToken.cancelled) {
-                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+                        post({ type: "mutation.error", requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
                     }
                 }
             };
@@ -567,7 +479,7 @@ function activate(context) {
                     if (!validation.success) {
                         // Check cancellation before posting error
                         if (!cancellationToken.cancelled) {
-                            post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${validation.error.message}` });
                         }
                         return;
                     }
@@ -584,7 +496,7 @@ function activate(context) {
                     output.appendLine(`[Extension] Error in handleLoadMore: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     // Check both disposal flag and cancellation token
                     if (!isDisposed && !cancellationToken.cancelled) {
-                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+                        post({ type: "mutation.error", requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
                     }
                 }
             };
@@ -621,7 +533,7 @@ function activate(context) {
                     output.appendLine(`[Extension] Error in handleTableLoadPage: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
                     // Check both disposal flag and cancellation token
                     if (!isDisposed && !cancellationToken.cancelled) {
-                        post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+                        post({ type: "mutation.error", requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
                     }
                 }
             };
@@ -642,6 +554,75 @@ function activate(context) {
                 if (msg.type === "board.loadMore") {
                     const { column } = msg.payload;
                     await handleLoadMore(msg.requestId, column);
+                    return;
+                }
+                if (msg.type === "board.loadMinimal") {
+                    try {
+                        // Check if adapter supports fast loading
+                        if (typeof adapter.getBoardMinimal !== 'function') {
+                            post({ type: "mutation.error", requestId: msg.requestId, error: "Adapter does not support fast minimal loading. Please enable daemon mode or update your adapter." });
+                            return;
+                        }
+                        output.appendLine(`[Extension] Loading minimal board data`);
+                        const cards = await adapter.getBoardMinimal();
+                        output.appendLine(`[Extension] Loaded ${cards.length} minimal cards`);
+                        // Check cancellation before posting
+                        if (!cancellationToken.cancelled) {
+                            post({ type: "board.minimal", requestId: msg.requestId, payload: { cards } });
+                        }
+                        else {
+                            output.appendLine(`[Extension] Skipped posting board.minimal - operation cancelled`);
+                        }
+                    }
+                    catch (e) {
+                        output.appendLine(`[Extension] Error loading minimal board: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
+                        if (!isDisposed && !cancellationToken.cancelled) {
+                            post({ type: "mutation.error", requestId: msg.requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
+                        }
+                    }
+                    return;
+                }
+                if (msg.type === "issue.getFull") {
+                    try {
+                        const issueId = msg.payload.id;
+                        // Validate issue ID
+                        if (!issueId || typeof issueId !== 'string' || issueId.length === 0 || issueId.length > 100) {
+                            post({ type: "mutation.error", requestId: msg.requestId, error: "Invalid issue ID provided" });
+                            return;
+                        }
+                        // Check if adapter supports fast loading
+                        if (typeof adapter.getIssueFull !== 'function') {
+                            post({ type: "mutation.error", requestId: msg.requestId, error: "Adapter does not support full issue loading. Please enable daemon mode or update your adapter." });
+                            return;
+                        }
+                        output.appendLine(`[Extension] Loading full details for issue ${issueId}`);
+                        const card = await adapter.getIssueFull(issueId);
+                        output.appendLine(`[Extension] Loaded full card for ${issueId}`);
+                        // Validate markdown content (defense-in-depth)
+                        const fullCardValid = (0, markdownValidator_1.validateMarkdownFields)({
+                            description: card.description,
+                            acceptance_criteria: card.acceptance_criteria,
+                            design: card.design,
+                            notes: card.notes
+                        }, output);
+                        if (!fullCardValid) {
+                            output.appendLine(`[Extension] Warning: Suspicious content detected in full card ${issueId}`);
+                            // Log warning but allow return (defense-in-depth, not blocking)
+                        }
+                        // Check cancellation before posting
+                        if (!cancellationToken.cancelled) {
+                            post({ type: "issue.full", requestId: msg.requestId, payload: { card } });
+                        }
+                        else {
+                            output.appendLine(`[Extension] Skipped posting issue.full - operation cancelled`);
+                        }
+                    }
+                    catch (e) {
+                        output.appendLine(`[Extension] Error loading full issue: ${(0, sanitizeError_1.sanitizeErrorWithContext)(e)}`);
+                        if (!isDisposed && !cancellationToken.cancelled) {
+                            post({ type: "mutation.error", requestId: msg.requestId, error: (0, sanitizeError_1.sanitizeErrorWithContext)(e) });
+                        }
+                    }
                     return;
                 }
                 if (msg.type === "table.loadPage") {
@@ -700,7 +681,7 @@ function activate(context) {
                     if (msg.type === "issue.create") {
                         const validation = types_1.IssueCreateSchema.safeParse(msg.payload);
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${validation.error.message}` });
                             return;
                         }
                         // Validate markdown content (defense-in-depth)
@@ -724,7 +705,7 @@ function activate(context) {
                             status: toStatus
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid move data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid move data: ${validation.error.message}` });
                             return;
                         }
                         await adapter.setIssueStatus(validation.data.id, validation.data.status);
@@ -754,7 +735,7 @@ function activate(context) {
                     if (msg.type === "issue.update") {
                         const validation = types_1.IssueUpdateSchema.safeParse(msg.payload);
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${validation.error.message}` });
                             return;
                         }
                         // Validate markdown content in updates (defense-in-depth)
@@ -784,7 +765,7 @@ function activate(context) {
                             author
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${validation.error.message}` });
                             return;
                         }
                         // Validate comment markdown content (defense-in-depth)
@@ -804,7 +785,7 @@ function activate(context) {
                             label: msg.payload.label
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
                             return;
                         }
                         await adapter.addLabel(validation.data.id, validation.data.label);
@@ -818,7 +799,7 @@ function activate(context) {
                             label: msg.payload.label
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
                             return;
                         }
                         await adapter.removeLabel(validation.data.id, validation.data.label);
@@ -833,7 +814,7 @@ function activate(context) {
                             type: msg.payload.type
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
                             return;
                         }
                         await adapter.addDependency(validation.data.id, validation.data.otherId, validation.data.type);
@@ -847,7 +828,7 @@ function activate(context) {
                             otherId: msg.payload.otherId
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${formatZodError(validation.error)}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
                             return;
                         }
                         await adapter.removeDependency(validation.data.id, validation.data.otherId);
@@ -882,9 +863,21 @@ function activate(context) {
                 const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(ws, ".beads/**/*.{db,sqlite,sqlite3}"));
                 let refreshTimeout = null;
                 let changeCount = 0; // Track changes during debounce window
-                const refresh = () => {
+                const refresh = (uri) => {
+                    // Ignore WAL/SHM/Journal files which change frequently during reads
+                    if (uri && (uri.fsPath.endsWith('-wal') || uri.fsPath.endsWith('-shm') || uri.fsPath.endsWith('-journal'))) {
+                        return;
+                    }
+                    // Log what triggered the refresh
+                    if (uri) {
+                        output.appendLine(`[Extension] File changed: ${uri.fsPath}`);
+                    }
+                    else {
+                        output.appendLine(`[Extension] File changed (unknown URI)`);
+                    }
                     // Skip refresh if this change is from our own save operation
                     if (adapter.isRecentSelfSave()) {
+                        output.appendLine(`[Extension] Ignoring change due to recent self-save/interaction`);
                         return;
                     }
                     // Track rapid changes for monitoring
@@ -896,11 +889,6 @@ function activate(context) {
                         clearTimeout(refreshTimeout);
                     }
                     refreshTimeout = setTimeout(async () => {
-                        // Clear timeout reference immediately to prevent race conditions
-                        // This must happen BEFORE any awaits, otherwise a new file change
-                        // could come in and see the old timeout reference
-                        const currentTimeout = refreshTimeout;
-                        refreshTimeout = null;
                         try {
                             // Reload database from disk to pick up external changes
                             await adapter.reloadDatabase();
@@ -918,10 +906,9 @@ function activate(context) {
                             // Show warning to user so they know auto-refresh is broken
                             vscode.window.showWarningMessage(`Beads auto-refresh failed: ${errorMsg}. Use the Refresh button to try again.`);
                         }
-                        finally {
-                            // Reset change tracking after refresh completes
-                            changeCount = 0;
-                        }
+                        // Reset change tracking after refresh completes
+                        changeCount = 0;
+                        refreshTimeout = null;
                     }, 300);
                 };
                 watcher.onDidChange(refresh);

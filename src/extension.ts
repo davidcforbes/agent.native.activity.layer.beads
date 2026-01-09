@@ -964,9 +964,22 @@ export function activate(context: vscode.ExtensionContext) {
       );
       let refreshTimeout: NodeJS.Timeout | null = null;
       let changeCount = 0; // Track changes during debounce window
-      const refresh = () => {
+      const refresh = (uri?: vscode.Uri) => {
+        // Ignore WAL/SHM/Journal files which change frequently during reads
+        if (uri && (uri.fsPath.endsWith('-wal') || uri.fsPath.endsWith('-shm') || uri.fsPath.endsWith('-journal'))) {
+          return;
+        }
+
+        // Log what triggered the refresh
+        if (uri) {
+          output.appendLine(`[Extension] File changed: ${uri.fsPath}`);
+        } else {
+          output.appendLine(`[Extension] File changed (unknown URI)`);
+        }
+
         // Skip refresh if this change is from our own save operation
         if (adapter.isRecentSelfSave()) {
+          output.appendLine(`[Extension] Ignoring change due to recent self-save/interaction`);
           return;
         }
 

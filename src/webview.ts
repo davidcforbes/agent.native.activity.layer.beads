@@ -3,7 +3,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 
 export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "main.js"));
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "board.js"));
   const sortableUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "Sortable.min.js"));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "styles.css"));
   const dompurifyUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "purify.min.js"));
@@ -28,8 +28,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
-                 img-src ${webview.cspSource};
-                 style-src ${webview.cspSource};
+                 img-src ${webview.cspSource} data:;
+                 style-src ${webview.cspSource} 'unsafe-inline';
                  script-src 'nonce-${nonce}';
                  connect-src ${webview.cspSource};
                  base-uri 'none';

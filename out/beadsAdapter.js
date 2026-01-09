@@ -54,6 +54,8 @@ class BeadsAdapter {
     isReloading = false; // Prevent concurrent mutations during database reload
     lastSaveTime = 0;
     lastKnownMtime = 0; // Track file modification time to detect external changes
+    // Lock for save operations to prevent race conditions
+    saveLock = false;
     constructor(output) {
         this.output = output;
     }
@@ -210,32 +212,59 @@ class BeadsAdapter {
      * 3. No dirty data is lost when reloading from disk
      */
     async flushPendingSaves() {
-        // Cancel any scheduled save and execute immediately if needed
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout);
-            this.saveTimeout = null;
-        }
-        // If we have dirty data and aren't currently saving, save now
-        if (this.isDirty && !this.isSaving) {
-            this.isDirty = false;
-            this.isSaving = true;
-            try {
-                this.save();
+        // Wait for save lock to prevent race conditions
+        const MAX_LOCK_WAIT_MS = 10000; // 10 seconds max wait
+        const startWait = Date.now();
+        while (this.saveLock) {
+            if (Date.now() - startWait > MAX_LOCK_WAIT_MS) {
+                this.output.appendLine('[BeadsAdapter] WARNING: Save lock timeout - forcing lock release');
+                this.saveLock = false;
+                break;
             }
-            catch (error) {
-                // If save failed, mark as dirty again
-                this.isDirty = true;
-                throw error; // Re-throw to prevent reload after failed save
-            }
-            finally {
-                this.isSaving = false;
-            }
+            await new Promise(resolve => setTimeout(resolve, 10));
         }
-        // If save is in progress (shouldn't happen but be defensive), wait for it
-        while (this.isSaving) {
-            await new Promise(resolve => setTimeout(resolve, 50));
+        // Acquire lock
+        this.saveLock = true;
+        try {
+            // Cancel any scheduled save and execute immediately if needed
+            if (this.saveTimeout) {
+                clearTimeout(this.saveTimeout);
+                this.saveTimeout = null;
+            }
+            // If we have dirty data and aren't currently saving, save now
+            if (this.isDirty && !this.isSaving) {
+                this.isDirty = false;
+                this.isSaving = true;
+                try {
+                    this.save();
+                }
+                catch (error) {
+                    // If save failed, mark as dirty again
+                    this.isDirty = true;
+                    throw error; // Re-throw to prevent reload after failed save
+                }
+                finally {
+                    this.isSaving = false;
+                }
+            }
+            // If save is in progress (shouldn't happen but be defensive), wait for it with timeout
+            let saveWaitAttempts = 0;
+            const MAX_SAVE_WAIT_ATTEMPTS = 200; // 200 * 50ms = 10 seconds max wait
+            while (this.isSaving && saveWaitAttempts < MAX_SAVE_WAIT_ATTEMPTS) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                saveWaitAttempts++;
+            }
+            if (this.isSaving) {
+                this.output.appendLine('[BeadsAdapter] WARNING: Save timeout - isSaving flag stuck. Forcing completion.');
+                this.isSaving = false; // Force reset to prevent permanent hang
+                throw new Error('Timeout waiting for save completion after 10 seconds');
+            }
+            this.output.appendLine('[BeadsAdapter] Pending saves flushed successfully');
         }
-        this.output.appendLine('[BeadsAdapter] Pending saves flushed successfully');
+        finally {
+            // Always release lock
+            this.saveLock = false;
+        }
     }
     async reloadDatabase() {
         // Set reload lock to prevent concurrent mutations
@@ -289,9 +318,17 @@ class BeadsAdapter {
      * This prevents the race condition where mutations occur during reload.
      */
     async waitForReloadComplete() {
-        while (this.isReloading) {
+        let reloadWaitAttempts = 0;
+        const MAX_RELOAD_WAIT_ATTEMPTS = 400; // 400 * 50ms = 20 seconds max wait
+        while (this.isReloading && reloadWaitAttempts < MAX_RELOAD_WAIT_ATTEMPTS) {
             this.output.appendLine('[BeadsAdapter] Waiting for database reload to complete...');
             await new Promise(resolve => setTimeout(resolve, 50));
+            reloadWaitAttempts++;
+        }
+        if (this.isReloading) {
+            this.output.appendLine('[BeadsAdapter] WARNING: Reload timeout - isReloading flag stuck. Forcing completion.');
+            this.isReloading = false; // Force reset to prevent permanent hang
+            throw new Error('Timeout waiting for database reload completion after 20 seconds');
         }
     }
     /**
@@ -578,6 +615,297 @@ class BeadsAdapter {
         ];
         const boardData = { columns, cards };
         return boardData;
+    }
+    // Phase 3: Fast minimal board loading for 3-tier progressive architecture
+    // Returns MinimalCard[] with only 13 core fields, no relationships/comments
+    // Expected performance: <100ms for 400 issues (vs 300-500ms for full getBoard)
+    async getBoardMinimal() {
+        if (!this.db)
+            await this.ensureConnected();
+        if (!this.db)
+            throw new Error('Failed to connect to database');
+        // Check if database file was modified externally
+        const fileChanged = await this.hasFileChangedExternally();
+        if (fileChanged && !this.isRecentSelfSave()) {
+            this.output.appendLine('[BeadsAdapter] External database change detected, reloading from disk');
+            await this.reloadFromDisk();
+        }
+        // Fast query with enriched fields (assignee, labels, etc.) for better card display
+        // Uses GROUP_CONCAT for labels - minimal overhead vs pure MinimalCard
+        const rows = this.queryAll(`
+      SELECT
+        i.id,
+        i.title,
+        i.description,
+        i.status,
+        i.priority,
+        i.issue_type,
+        i.created_at,
+        COALESCE(ic.creator, 'unknown') AS created_by,
+        i.updated_at,
+        i.closed_at,
+        CASE WHEN i.status = 'closed' AND i.closed_at IS NOT NULL 
+          THEN 'completed' 
+          ELSE NULL 
+        END AS close_reason,
+        (SELECT COUNT(*) FROM dependencies d WHERE d.issue_id = i.id) AS dependency_count,
+        (SELECT COUNT(*) FROM dependencies d WHERE d.depends_on_id = i.id) AS dependent_count,
+        i.assignee,
+        i.estimated_minutes,
+        i.external_ref,
+        i.pinned,
+        (SELECT COUNT(*) FROM dependencies d WHERE d.issue_id = i.id AND d.type = 'blocks') AS blocked_by_count,
+        GROUP_CONCAT(l.label, '|||') AS labels_str
+      FROM issues i
+      LEFT JOIN issue_creators ic ON ic.issue_id = i.id
+      LEFT JOIN labels l ON l.issue_id = i.id
+      WHERE i.deleted_at IS NULL
+      GROUP BY i.id
+      ORDER BY i.priority ASC, i.updated_at DESC, i.created_at DESC
+      LIMIT 10000;
+    `);
+        const cards = rows.map(r => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            status: r.status,
+            priority: r.priority,
+            issue_type: r.issue_type,
+            created_at: r.created_at,
+            created_by: r.created_by,
+            updated_at: r.updated_at,
+            closed_at: r.closed_at,
+            close_reason: r.close_reason,
+            dependency_count: r.dependency_count,
+            dependent_count: r.dependent_count,
+            assignee: r.assignee,
+            estimated_minutes: r.estimated_minutes,
+            external_ref: r.external_ref,
+            pinned: r.pinned === 1,
+            blocked_by_count: r.blocked_by_count,
+            labels: r.labels_str ? r.labels_str.split('|||') : []
+        }));
+        this.output.appendLine(`[BeadsAdapter] getBoardMinimal() loaded ${cards.length} enriched cards`);
+        return cards;
+    }
+    // Phase 3: Load full issue details on-demand for edit dialog
+    // Returns FullCard with all fields including relationships and comments
+    // Expected performance: <50ms per issue
+    async getIssueFull(issueId) {
+        if (!this.db)
+            await this.ensureConnected();
+        if (!this.db)
+            throw new Error('Failed to connect to database');
+        // Load main issue data
+        const rows = this.queryAll(`
+      SELECT
+        i.id,
+        i.title,
+        i.description,
+        i.status,
+        i.priority,
+        i.issue_type,
+        i.assignee,
+        i.estimated_minutes,
+        i.created_at,
+        i.updated_at,
+        i.closed_at,
+        i.external_ref,
+        i.acceptance_criteria,
+        i.design,
+        i.notes,
+        i.due_at,
+        i.defer_until,
+        CASE WHEN ri.id IS NOT NULL THEN 1 ELSE 0 END AS is_ready,
+        COALESCE(bi.blocked_by_count, 0) AS blocked_by_count,
+        i.pinned,
+        i.is_template,
+        i.ephemeral,
+        i.event_kind,
+        i.actor,
+        i.target,
+        i.payload,
+        i.sender,
+        i.mol_type,
+        i.role_type,
+        i.rig,
+        i.agent_state,
+        i.last_activity,
+        i.hook_bead,
+        i.role_bead,
+        i.await_type,
+        i.await_id,
+        i.timeout_ns,
+        i.waiters,
+        COALESCE(ic.creator, 'unknown') AS created_by
+      FROM issues i
+      LEFT JOIN ready_issues ri ON ri.id = i.id
+      LEFT JOIN blocked_issues bi ON bi.id = i.id
+      LEFT JOIN issue_creators ic ON ic.issue_id = i.id
+      WHERE i.id = ? AND i.deleted_at IS NULL
+      LIMIT 1;
+    `, [issueId]);
+        if (rows.length === 0) {
+            throw new Error(`Issue not found: ${issueId}`);
+        }
+        const issue = rows[0];
+        // Load dependency counts
+        const depCounts = this.queryAll(`
+      SELECT
+        (SELECT COUNT(*) FROM dependencies d WHERE d.issue_id = ?) AS dependency_count,
+        (SELECT COUNT(*) FROM dependencies d WHERE d.depends_on_id = ?) AS dependent_count;
+    `, [issueId, issueId]);
+        const dependency_count = depCounts[0]?.dependency_count || 0;
+        const dependent_count = depCounts[0]?.dependent_count || 0;
+        // Load labels
+        const labelRows = this.queryAll(`SELECT label FROM labels WHERE issue_id = ? ORDER BY label;`, [issueId]);
+        const labels = labelRows.map(r => r.label);
+        // Load comments
+        const commentRows = this.queryAll(`SELECT id, author, text, created_at FROM comments WHERE issue_id = ? ORDER BY created_at ASC;`, [issueId]);
+        const comments = commentRows.map(c => ({
+            id: c.id,
+            issue_id: issueId,
+            author: c.author,
+            text: c.text,
+            created_at: c.created_at
+        }));
+        // Load dependencies (parent, children, blocks, blocked_by)
+        const deps = this.queryAll(`
+      SELECT 
+        d.issue_id,
+        d.depends_on_id,
+        d.type,
+        i1.title as issue_title,
+        i2.title as depends_title,
+        d.created_at,
+        d.created_by,
+        d.metadata,
+        d.thread_id
+      FROM dependencies d
+      JOIN issues i1 ON i1.id = d.issue_id
+      JOIN issues i2 ON i2.id = d.depends_on_id
+      WHERE d.issue_id = ? OR d.depends_on_id = ?;
+    `, [issueId, issueId]);
+        let parent;
+        const children = [];
+        const blocked_by = [];
+        const blocks = [];
+        for (const d of deps) {
+            const child = {
+                id: d.issue_id,
+                title: d.issue_title,
+                created_at: d.created_at,
+                created_by: d.created_by,
+                metadata: d.metadata,
+                thread_id: d.thread_id
+            };
+            const parentDep = {
+                id: d.depends_on_id,
+                title: d.depends_title,
+                created_at: d.created_at,
+                created_by: d.created_by,
+                metadata: d.metadata,
+                thread_id: d.thread_id
+            };
+            if (d.type === 'parent-child') {
+                if (d.issue_id === issueId) {
+                    // This issue is the child, depends_on_id is the parent
+                    parent = parentDep;
+                }
+                else {
+                    // This issue is the parent, issue_id is the child
+                    children.push(child);
+                }
+            }
+            else if (d.type === 'blocks') {
+                if (d.issue_id === issueId) {
+                    // This issue is blocked by depends_on_id
+                    blocked_by.push(parentDep);
+                }
+                else {
+                    // This issue blocks issue_id
+                    blocks.push(child);
+                }
+            }
+        }
+        // Map to FullCard
+        const fullCard = {
+            id: issue.id,
+            title: issue.title,
+            description: issue.description,
+            status: issue.status,
+            priority: issue.priority,
+            issue_type: issue.issue_type,
+            created_at: issue.created_at,
+            created_by: issue.created_by || 'unknown',
+            updated_at: issue.updated_at,
+            closed_at: issue.closed_at,
+            close_reason: issue.status === 'closed' && issue.closed_at ? 'completed' : null,
+            dependency_count,
+            dependent_count,
+            assignee: issue.assignee,
+            estimated_minutes: issue.estimated_minutes,
+            labels,
+            external_ref: issue.external_ref,
+            pinned: issue.pinned === 1,
+            blocked_by_count: issue.blocked_by_count,
+            acceptance_criteria: issue.acceptance_criteria,
+            design: issue.design,
+            notes: issue.notes,
+            due_at: issue.due_at,
+            defer_until: issue.defer_until,
+            is_ready: issue.is_ready === 1,
+            is_template: issue.is_template === 1,
+            ephemeral: issue.ephemeral === 1,
+            event_kind: issue.event_kind,
+            actor: issue.actor,
+            target: issue.target,
+            payload: issue.payload,
+            sender: issue.sender,
+            mol_type: issue.mol_type,
+            role_type: issue.role_type,
+            rig: issue.rig,
+            agent_state: issue.agent_state,
+            last_activity: issue.last_activity,
+            hook_bead: issue.hook_bead,
+            role_bead: issue.role_bead,
+            await_type: issue.await_type,
+            await_id: issue.await_id,
+            timeout_ns: issue.timeout_ns,
+            waiters: issue.waiters,
+            parent,
+            children,
+            blocks,
+            blocked_by,
+            comments
+        };
+        this.output.appendLine(`[BeadsAdapter] getIssueFull(${issueId}) loaded full card`);
+        return fullCard;
+    }
+    /**
+     * Get board metadata (columns only) without loading any cards.
+     * Used for incremental loading to avoid fetching all issues.
+     */
+    async getBoardMetadata() {
+        // Ensure database connection but don't load any issues
+        if (!this.db)
+            await this.ensureConnected();
+        if (!this.db)
+            throw new Error('Failed to connect to database');
+        // Check if database file was modified externally
+        const fileChanged = await this.hasFileChangedExternally();
+        if (fileChanged && !this.isRecentSelfSave()) {
+            this.output.appendLine('[BeadsAdapter] External database change detected, reloading from disk');
+            await this.reloadFromDisk();
+        }
+        const columns = [
+            { key: "ready", title: "Ready" },
+            { key: "in_progress", title: "In Progress" },
+            { key: "blocked", title: "Blocked" },
+            { key: "closed", title: "Closed" }
+        ];
+        // Return only columns, no cards - cards will be loaded via getColumnData
+        return { columns, cards: [] };
     }
     /**
      * Get comments for a specific issue (lazy-loaded on demand).
@@ -1194,6 +1522,12 @@ class BeadsAdapter {
         if (input.blocked_by_ids && input.blocked_by_ids.length > 0) {
             for (const blockerId of input.blocked_by_ids) {
                 this.runQuery(`INSERT INTO dependencies (issue_id, depends_on_id, type) VALUES (?, ?, 'blocks')`, [id, blockerId]);
+            }
+        }
+        // Insert children (set parent on each child)
+        if (input.children_ids && input.children_ids.length > 0) {
+            for (const childId of input.children_ids) {
+                this.runQuery(`INSERT INTO dependencies (issue_id, depends_on_id, type) VALUES (?, ?, 'parent-child')`, [childId, id]);
             }
         }
         return { id };
