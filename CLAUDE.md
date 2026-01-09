@@ -41,7 +41,7 @@ Extension Host (TypeScript/Node.js)
 - `src/webview.ts` - Generates webview HTML with CSP and asset URIs
 
 Webview (JavaScript/HTML/CSS)
-- `media/main.js` - UI logic; Sortable drag-and-drop, filters, detail dialog, incremental column loading, and request/response messaging
+- `media/board.js` - UI logic; Sortable drag-and-drop, filters, detail dialog, incremental column loading, and request/response messaging
 - `media/styles.css` - Theme-aware styling
 - `media/Sortable.min.js` - Drag-and-drop library
 - `media/marked.min.js` - Markdown rendering
