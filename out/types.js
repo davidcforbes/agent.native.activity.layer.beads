@@ -3,7 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BoardLoadMoreSchema = exports.BoardLoadColumnSchema = exports.DependencySchema = exports.LabelSchema = exports.CommentAddSchema = exports.SetStatusSchema = exports.IssueCreateSchema = exports.IssueUpdateSchema = void 0;
 const zod_1 = require("zod");
 // Zod validation schemas for runtime message validation
-const IssueIdSchema = zod_1.z.string().min(1).max(200);
+// Strict issue ID format: project.name-suffix (prevents path traversal, XSS, command injection)
+// Must start with alphanumeric, can contain alphanumeric/dots/hyphens, must end with -suffix
+const IssueIdSchema = zod_1.z.string().regex(/^[a-z0-9][a-z0-9.-]*-[a-z0-9]+$/i, 'Invalid issue ID format - must match pattern: project-suffix');
 const BoardColumnKeySchema = zod_1.z.enum(['ready', 'open', 'in_progress', 'blocked', 'closed']);
 exports.IssueUpdateSchema = zod_1.z.object({
     id: IssueIdSchema,

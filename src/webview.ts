@@ -34,7 +34,12 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
                  connect-src ${webview.cspSource};
                  base-uri 'none';
                  frame-ancestors 'none';
-                 form-action 'none';">
+                 form-action 'none';
+                 object-src 'none';
+                 media-src 'none';
+                 font-src 'none';
+                 worker-src 'none';
+                 manifest-src 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="${styleUri}" rel="stylesheet" />
   <title>Agent Native Abstraction Layer for Beads</title>
@@ -67,6 +72,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
            <option value="epic">Epic</option>
            <option value="chore">Chore</option>
         </select>
+        <button id="clearFiltersBtn" class="btn" title="Clear all filters">Clear Filters</button>
       </div>
       <button id="refreshBtn" class="btn" title="Refresh board (${modKey}+R)">Refresh</button>
       <button id="newBtn" class="btn primary" title="Create new issue (${modKey}+N)">New</button>
@@ -99,6 +105,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 
   <div id="loadingOverlay" class="loading-overlay hidden">
     <div class="loading-spinner"></div>
+    <div id="loadingText" class="loading-text">Loading...</div>
   </div>
 
   <script nonce="${nonce}" src="${dompurifyUri}"></script>

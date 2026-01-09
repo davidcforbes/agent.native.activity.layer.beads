@@ -97,6 +97,60 @@ function getUserFriendlyErrorMessage(error) {
     // Generic fallback with sanitized message
     return `Failed to load board: ${(0, sanitizeError_1.sanitizeErrorWithContext)(error)}. Check the Output panel (Beads Kanban) for details.`;
 }
+/**
+ * Converts Zod validation errors into user-friendly messages.
+ * Parses technical Zod error structures and returns actionable guidance.
+ */
+function formatZodError(zodError) {
+    if (!zodError.issues || zodError.issues.length === 0) {
+        return 'Invalid data provided';
+    }
+    const messages = zodError.issues.map((issue) => {
+        const field = issue.path.length > 0 ? issue.path.join('.') : 'field';
+        switch (issue.code) {
+            case 'invalid_type':
+                if (issue.received === 'undefined' || issue.received === 'null') {
+                    return `${field} is required`;
+                }
+                return `${field} must be a ${issue.expected}`;
+            case 'too_small':
+                if (issue.type === 'string') {
+                    return `${field} must be at least ${issue.minimum} characters`;
+                }
+                if (issue.type === 'number') {
+                    return `${field} must be at least ${issue.minimum}`;
+                }
+                return `${field} is too small`;
+            case 'too_big':
+                if (issue.type === 'string') {
+                    return `${field} must be at most ${issue.maximum} characters`;
+                }
+                if (issue.type === 'number') {
+                    return `${field} must be at most ${issue.maximum}`;
+                }
+                return `${field} is too large`;
+            case 'invalid_string':
+                if (issue.validation === 'email') {
+                    return `${field} must be a valid email address`;
+                }
+                if (issue.validation === 'url') {
+                    return `${field} must be a valid URL`;
+                }
+                if (issue.validation === 'datetime') {
+                    return `${field} must be a valid date/time`;
+                }
+                if (issue.validation === 'regex') {
+                    return `${field} format is invalid`;
+                }
+                return `${field} is not valid`;
+            case 'invalid_enum_value':
+                return `${field} must be one of: ${issue.options.join(', ')}`;
+            default:
+                return issue.message || `${field} is invalid`;
+        }
+    });
+    return messages.join('; ');
+}
 function activate(context) {
     const output = vscode.window.createOutputChannel("Beads Kanban");
     output.appendLine('[BeadsAdapter] Environment Versions: ' + JSON.stringify(process.versions, null, 2));
@@ -469,7 +523,7 @@ function activate(context) {
                     // Validate the request
                     const validation = types_1.BoardLoadColumnSchema.safeParse({ column, offset, limit });
                     if (!validation.success) {
-                        post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${validation.error.message}` });
+                        post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${formatZodError(validation.error)}` });
                         return;
                     }
                     // Load the column data
@@ -513,7 +567,7 @@ function activate(context) {
                     if (!validation.success) {
                         // Check cancellation before posting error
                         if (!cancellationToken.cancelled) {
-                            post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${formatZodError(validation.error)}` });
                         }
                         return;
                     }
@@ -646,7 +700,7 @@ function activate(context) {
                     if (msg.type === "issue.create") {
                         const validation = types_1.IssueCreateSchema.safeParse(msg.payload);
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         // Validate markdown content (defense-in-depth)
@@ -670,7 +724,7 @@ function activate(context) {
                             status: toStatus
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid move data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid move data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         await adapter.setIssueStatus(validation.data.id, validation.data.status);
@@ -700,7 +754,7 @@ function activate(context) {
                     if (msg.type === "issue.update") {
                         const validation = types_1.IssueUpdateSchema.safeParse(msg.payload);
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         // Validate markdown content in updates (defense-in-depth)
@@ -730,7 +784,7 @@ function activate(context) {
                             author
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         // Validate comment markdown content (defense-in-depth)
@@ -750,7 +804,7 @@ function activate(context) {
                             label: msg.payload.label
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         await adapter.addLabel(validation.data.id, validation.data.label);
@@ -764,7 +818,7 @@ function activate(context) {
                             label: msg.payload.label
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         await adapter.removeLabel(validation.data.id, validation.data.label);
@@ -779,7 +833,7 @@ function activate(context) {
                             type: msg.payload.type
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         await adapter.addDependency(validation.data.id, validation.data.otherId, validation.data.type);
@@ -793,7 +847,7 @@ function activate(context) {
                             otherId: msg.payload.otherId
                         });
                         if (!validation.success) {
-                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
+                            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${formatZodError(validation.error)}` });
                             return;
                         }
                         await adapter.removeDependency(validation.data.id, validation.data.otherId);

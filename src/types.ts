@@ -148,7 +148,12 @@ export interface ColumnData extends ColumnLoadState {
 export type ColumnDataMap = Record<BoardColumnKey, ColumnData>;
 
 // Zod validation schemas for runtime message validation
-const IssueIdSchema = z.string().min(1).max(200);
+// Strict issue ID format: project.name-suffix (prevents path traversal, XSS, command injection)
+// Must start with alphanumeric, can contain alphanumeric/dots/hyphens, must end with -suffix
+const IssueIdSchema = z.string().regex(
+  /^[a-z0-9][a-z0-9.-]*-[a-z0-9]+$/i,
+  'Invalid issue ID format - must match pattern: project-suffix'
+);
 const BoardColumnKeySchema = z.enum(['ready', 'open', 'in_progress', 'blocked', 'closed']);
 
 export const IssueUpdateSchema = z.object({

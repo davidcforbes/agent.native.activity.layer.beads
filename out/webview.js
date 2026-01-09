@@ -43,41 +43,51 @@ function getWebviewHtml(webview, extensionUri) {
     const dompurifyUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "purify.min.js"));
     // Generate cryptographically secure nonce
     const nonce = crypto.randomBytes(16).toString('hex');
+    // Detect platform for keyboard shortcut display
+    const isMac = process.platform === 'darwin';
+    const modKey = isMac ? '⌘' : 'Ctrl';
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <!--
-    CSP Note: style-src-attr 'unsafe-inline' is allowed because:
-    1. All inline styles use static values or trusted config (no user-controlled values)
-    2. All user content is escaped via escapeHtml() preventing XSS
-    3. Converting 118+ inline styles to CSS classes provides minimal security benefit
-    4. Inline <style> tags and javascript: URIs are still blocked
+    CSP Policy:
+    - No inline style attributes are used in the HTML
+    - JavaScript style manipulations via .style property are not affected by style-src-attr
+    - All user content is sanitized via DOMPurify preventing XSS
+    - Nonce-based script loading prevents unauthorized script execution
   -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
                  img-src ${webview.cspSource};
                  style-src ${webview.cspSource};
-                 style-src-attr 'unsafe-inline';
                  script-src 'nonce-${nonce}';
                  connect-src ${webview.cspSource};
                  base-uri 'none';
                  frame-ancestors 'none';
-                 form-action 'none';">
+                 form-action 'none';
+                 object-src 'none';
+                 media-src 'none';
+                 font-src 'none';
+                 worker-src 'none';
+                 manifest-src 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="${styleUri}" rel="stylesheet" />
   <title>Agent Native Abstraction Layer for Beads</title>
 </head>
 <body>
   <header class="topbar">
-    <div class="title">Agent Native Abstraction Layer for Beads</div>
+    <div class="title">
+      <span class="title-text">Agent Native Abstraction Layer for Beads</span>
+      <button id="repoMenuBtn" class="repo-menu-btn" title="Select Repository">⋯</button>
+    </div>
     <div class="actions">
       <div class="view-toggle">
         <button id="viewKanbanBtn" class="view-toggle-btn active">Kanban</button>
         <button id="viewTableBtn" class="view-toggle-btn">Table</button>
       </div>
       <div class="filters">
-        <input id="filterSearch" type="text" placeholder="Search..." class="search-input" />
+        <input id="filterSearch" type="text" placeholder="Search... (${modKey}+F)" title="Focus search (${modKey}+F)" class="search-input" />
         <select id="filterPriority" class="select">
            <option value="">Priority: All</option>
            <option value="0">P0</option>
@@ -93,9 +103,10 @@ function getWebviewHtml(webview, extensionUri) {
            <option value="epic">Epic</option>
            <option value="chore">Chore</option>
         </select>
+        <button id="clearFiltersBtn" class="btn" title="Clear all filters">Clear Filters</button>
       </div>
-      <button id="refreshBtn" class="btn">Refresh</button>
-      <button id="newBtn" class="btn primary">New</button>
+      <button id="refreshBtn" class="btn" title="Refresh board (${modKey}+R)">Refresh</button>
+      <button id="newBtn" class="btn primary" title="Create new issue (${modKey}+N)">New</button>
     </div>
   </header>
 
@@ -125,6 +136,7 @@ function getWebviewHtml(webview, extensionUri) {
 
   <div id="loadingOverlay" class="loading-overlay hidden">
     <div class="loading-spinner"></div>
+    <div id="loadingText" class="loading-text">Loading...</div>
   </div>
 
   <script nonce="${nonce}" src="${dompurifyUri}"></script>

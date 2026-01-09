@@ -17,6 +17,7 @@ const copyContextBtn = document.getElementById("copyContextBtn");
 const filterPriority = document.getElementById("filterPriority");
 const filterType = document.getElementById("filterType");
 const filterSearch = document.getElementById("filterSearch");
+const clearFiltersBtn = document.getElementById("clearFiltersBtn");
 
 const viewKanbanBtn = document.getElementById("viewKanbanBtn");
 const viewTableBtn = document.getElementById("viewTableBtn");
@@ -250,11 +251,15 @@ function saveCollapsedColumnsState() {
 let activeRequests = 0;
 
 // Loading indicator helpers
-function showLoading() {
+function showLoading(message = 'Loading...') {
     activeRequests++;
     const loader = document.getElementById('loadingOverlay');
+    const loaderText = document.getElementById('loadingText');
     if (loader) {
         loader.classList.remove('hidden');
+    }
+    if (loaderText) {
+        loaderText.textContent = message;
     }
 }
 
@@ -335,8 +340,8 @@ function requestId() {
 }
 
 // Post with promise support
-function postAsync(type, payload) {
-    showLoading();
+function postAsync(type, payload, loadingMessage = 'Loading...') {
+    showLoading(loadingMessage);
     const reqId = requestId();
     return new Promise((resolve, reject) => {
         // Timeout after 30 seconds
@@ -566,20 +571,34 @@ function renderKanban() {
 
         const countDiv = document.createElement("div");
         countDiv.className = "columnCount";
-        
+
         // Show "loaded / total" format for incremental loading
         const colState = columnState[col.key];
         const filteredCount = (byCol[col.key] || []).length;
-        
+        const hasActiveFilters = filterPriority.value || filterType.value || filterSearch.value;
+
         if (colState && colState.totalCount > colState.cards.length) {
             // Partial load: show "filtered (loaded / total)"
-            countDiv.textContent = `${filteredCount} (${colState.cards.length} / ${colState.totalCount})`;
+            if (hasActiveFilters && filteredCount !== colState.cards.length) {
+                countDiv.textContent = `${filteredCount} matches (${colState.cards.length} / ${colState.totalCount} loaded)`;
+                countDiv.setAttribute('title', `${filteredCount} cards match filters out of ${colState.cards.length} loaded (${colState.totalCount} total in this column)`);
+            } else {
+                countDiv.textContent = `${colState.cards.length} / ${colState.totalCount} loaded`;
+                countDiv.setAttribute('title', `${colState.cards.length} cards loaded out of ${colState.totalCount} total in this column`);
+            }
         } else if (colState && colState.totalCount > 0) {
             // Fully loaded: show "filtered / total"
-            countDiv.textContent = `${filteredCount} / ${colState.totalCount}`;
+            if (hasActiveFilters && filteredCount !== colState.totalCount) {
+                countDiv.textContent = `${filteredCount} matches of ${colState.totalCount}`;
+                countDiv.setAttribute('title', `${filteredCount} cards match filters out of ${colState.totalCount} total in this column`);
+            } else {
+                countDiv.textContent = `${colState.totalCount}`;
+                countDiv.setAttribute('title', `${colState.totalCount} cards in this column`);
+            }
         } else {
             // Legacy or no data
             countDiv.textContent = filteredCount;
+            countDiv.setAttribute('title', `${filteredCount} cards in this column`);
         }
 
         header.appendChild(titleDiv);
@@ -745,7 +764,7 @@ function renderKanban() {
                     render(); // Re-render to show spinner
                     
                     // Request more data
-                    await postAsync('board.loadMore', { column: col.key });
+                    await postAsync('board.loadMore', { column: col.key }, 'Loading more issues...');
                 } catch (error) {
                     console.error('[Webview] Load More failed:', error);
                     toast(`Failed to load more: ${error.message}`);
@@ -851,7 +870,7 @@ async function loadTablePage(page = null) {
             sorting: tableState.sorting,
             offset,
             limit
-        });
+        }, 'Loading table data...');
 
         if (response.type === 'table.pageData') {
             tablePaginationState.cards = response.payload.cards;
@@ -1163,6 +1182,14 @@ const debouncedRender = debounce(render, 300);
 filterPriority.addEventListener("change", render); // Immediate for dropdown
 filterType.addEventListener("change", render); // Immediate for dropdown
 filterSearch.addEventListener("input", debouncedRender); // Debounced for text input
+
+// Clear all filters
+clearFiltersBtn.addEventListener("click", () => {
+    filterPriority.value = '';
+    filterType.value = '';
+    filterSearch.value = '';
+    render();
+});
 
 // Keyboard shortcuts
 document.addEventListener("keydown", (e) => {
@@ -1786,18 +1813,18 @@ function openDetail(card) {
             try {
                 if (isCreateMode) {
                     // Create new issue
-                    const createResponse = await postAsync("issue.create", data);
+                    const createResponse = await postAsync("issue.create", data, "Creating issue...");
                     const newIssueId = createResponse?.payload?.id;
                     
                     // Post any comments that were added in create mode
                     if (newIssueId && card.comments && card.comments.length > 0) {
                         for (const comment of card.comments) {
                             try {
-                                await postAsync("issue.addComment", { 
-                                    id: newIssueId, 
-                                    text: comment.text, 
-                                    author: comment.author 
-                                });
+                                await postAsync("issue.addComment", {
+                                    id: newIssueId,
+                                    text: comment.text,
+                                    author: comment.author
+                                }, "Adding comment...");
                             } catch (commentErr) {
                                 console.error("Failed to post comment:", commentErr);
                                 // Don't fail the whole operation if a comment fails
@@ -1808,7 +1835,7 @@ function openDetail(card) {
                     toast("Issue created successfully");
                 } else {
                     // Update existing issue
-                    await postAsync("issue.update", { id: card.id, updates: data });
+                    await postAsync("issue.update", { id: card.id, updates: data }, "Saving changes...");
                     toast("Changes saved successfully");
                 }
                 detailDirty = false;
@@ -1868,7 +1895,7 @@ function openDetail(card) {
             } else {
                 // In edit mode, call API
                 try {
-                    await postAsync("issue.addComment", { id: card.id, text, author: "Me" });
+                    await postAsync("issue.addComment", { id: card.id, text, author: "Me" }, "Adding comment...");
                     if (!card.comments) card.comments = [];
                     card.comments.push({
                         id: Date.now(),
@@ -1918,14 +1945,14 @@ function openDetail(card) {
                 } else {
                     // In edit mode, call API
                     try {
-                        await postAsync("issue.removeLabel", { id: card.id, label });
+                        await postAsync("issue.removeLabel", { id: card.id, label }, "Removing label...");
                         // Update card.labels array
                         card.labels = (card.labels || []).filter(l => l !== label);
                         // Refresh the display
                         refreshLabelsDisplay();
                         toast("Label removed");
                         // Refresh board in background
-                        postAsync("board.refresh", {});
+                        postAsync("board.refresh", {}, "Refreshing board...");
                     } catch (err) {
                         console.error("Remove label failed:", err);
                         toast(`Failed to remove label: ${err.message}`);
@@ -1972,7 +1999,7 @@ function openDetail(card) {
             // In edit mode, call API for each label
             for (const label of labels) {
                 try {
-                    await postAsync("issue.addLabel", { id: card.id, label });
+                    await postAsync("issue.addLabel", { id: card.id, label }, "Adding label...");
                     // Update card.labels array
                     if (!card.labels) card.labels = [];
                     if (!card.labels.includes(label)) {
@@ -2010,7 +2037,7 @@ function openDetail(card) {
     async function refreshRelationshipsFromBoard() {
         if (!card.id) return;
         try {
-            const refreshed = await postAsync("board.refresh", {});
+            const refreshed = await postAsync("board.refresh", {}, "Refreshing board...");
             const updated = refreshed?.cards?.find((c) => c.id === card.id);
             if (updated) {
                 card.parent = updated.parent;
@@ -2048,7 +2075,7 @@ function openDetail(card) {
                 } else {
                     // In edit mode, call API
                     try {
-                        await postAsync("issue.addDependency", { id: card.id, otherId: parentId, type: 'parent-child' });
+                        await postAsync("issue.addDependency", { id: card.id, otherId: parentId, type: 'parent-child' }, "Adding parent...");
                         toast("Parent set");
                         await refreshRelationshipsFromBoard();
                     } catch (err) {
@@ -2070,7 +2097,7 @@ function openDetail(card) {
                 } else {
                     // In edit mode, call API
                     try {
-                        await postAsync("issue.removeDependency", { id: card.id, otherId: card.parent.id, type: 'parent-child' });
+                        await postAsync("issue.removeDependency", { id: card.id, otherId: card.parent.id, type: 'parent-child' }, "Removing parent...");
                         toast("Parent unlinked");
                         await refreshRelationshipsFromBoard();
                     } catch (err) {
@@ -2102,7 +2129,7 @@ function openDetail(card) {
                 } else {
                     // In edit mode, call API
                     try {
-                        await postAsync("issue.addDependency", { id: card.id, otherId: blockerId, type: 'blocks' });
+                        await postAsync("issue.addDependency", { id: card.id, otherId: blockerId, type: 'blocks' }, "Adding blocker...");
                         toast("Blocker added");
                         await refreshRelationshipsFromBoard();
                     } catch (err) {
@@ -2125,7 +2152,7 @@ function openDetail(card) {
                 } else {
                     // In edit mode, call API
                     try {
-                        await postAsync("issue.removeDependency", { id: card.id, otherId: blockerId, type: 'blocks' });
+                        await postAsync("issue.removeDependency", { id: card.id, otherId: blockerId, type: 'blocks' }, "Removing blocker...");
                         toast("Blocker removed");
                         await refreshRelationshipsFromBoard();
                     } catch (err) {
@@ -2158,7 +2185,7 @@ function openDetail(card) {
                     // In edit mode, call API
                     // Note: To add a child from the parent side, we set the parent on the child
                     try {
-                        await postAsync("issue.addDependency", { id: childId, otherId: card.id, type: 'parent-child' });
+                        await postAsync("issue.addDependency", { id: childId, otherId: card.id, type: 'parent-child' }, "Adding child...");
                         toast("Child added");
                         await refreshRelationshipsFromBoard();
                     } catch (err) {
@@ -2182,7 +2209,7 @@ function openDetail(card) {
                     // In edit mode, call API
                     // To remove a child, we remove the parent relationship from the child
                     try {
-                        await postAsync("issue.removeDependency", { id: childId, otherId: card.id, type: 'parent-child' });
+                        await postAsync("issue.removeDependency", { id: childId, otherId: card.id, type: 'parent-child' }, "Removing child...");
                         toast("Child removed");
                         await refreshRelationshipsFromBoard();
                     } catch (err) {
