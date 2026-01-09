@@ -26,7 +26,8 @@ const clearFiltersBtn = document.getElementById("clearFiltersBtn");
 function getSelectedStatuses() {
     if (!filterStatusDropdown) return [];
     const checkboxes = filterStatusDropdown.querySelectorAll('input[type="checkbox"]:checked');
-    return Array.from(checkboxes).map(cb => cb.value);
+    const values = Array.from(checkboxes).map(cb => cb.value).filter(v => v !== ''); // Filter out "All" (empty value)
+    return values;
 }
 
 function updateStatusLabel() {
@@ -52,7 +53,32 @@ if (filterStatusBtn && filterStatusDropdown) {
 
     // Update label and trigger filter when checkbox changes
     filterStatusDropdown.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
-        checkbox.addEventListener('change', () => {
+        checkbox.addEventListener('change', (e) => {
+            const allCheckbox = filterStatusDropdown.querySelector('input[value=""]');
+
+            if (checkbox.value === '') {
+                // "All" checkbox was clicked
+                if (checkbox.checked) {
+                    // Uncheck all other checkboxes
+                    filterStatusDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                        if (cb.value !== '') cb.checked = false;
+                    });
+                }
+            } else {
+                // A specific status checkbox was clicked
+                if (checkbox.checked) {
+                    // Uncheck "All"
+                    if (allCheckbox) allCheckbox.checked = false;
+                } else {
+                    // If no checkboxes are checked, check "All"
+                    const anyChecked = Array.from(filterStatusDropdown.querySelectorAll('input[type="checkbox"]'))
+                        .some(cb => cb.value !== '' && cb.checked);
+                    if (!anyChecked && allCheckbox) {
+                        allCheckbox.checked = true;
+                    }
+                }
+            }
+
             updateStatusLabel();
             render();
         });
@@ -1392,8 +1418,14 @@ filterSearch.addEventListener("input", debouncedRender); // Debounced for text i
 clearFiltersBtn.addEventListener("click", () => {
     filterPriority.value = '';
     filterType.value = '';
-    // Clear all status checkboxes
-    filterStatusDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    // Clear all status checkboxes and check "All"
+    filterStatusDropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        if (cb.value === '') {
+            cb.checked = true; // Check "All"
+        } else {
+            cb.checked = false; // Uncheck all others
+        }
+    });
     updateStatusLabel();
     filterSearch.value = '';
     render();
@@ -1925,25 +1957,36 @@ async function openDetail(card) {
                     <label class="form-label">Est. Minutes:</label>
                     <input id="editEst" type="number" value="${card.estimated_minutes || ''}" placeholder="Min" class="form-input-inline" />
                 </div>
-                
+
                 <div class="form-group">
                     <label class="form-label">Due At:</label>
                     <input id="editDueAt" type="datetime-local" value="${toLocalDateTimeInput(card.due_at)}" class="form-input-inline" />
                 </div>
-                
+
                 <div class="form-group">
                     <label class="form-label">Defer Until:</label>
                     <input id="editDeferUntil" type="datetime-local" value="${toLocalDateTimeInput(card.defer_until)}" class="form-input-inline" />
                 </div>
             </div>
 
-            <!-- Row 4: Ext Ref -->
-            <div class="form-row-wide-label">
-                <label class="form-label">Ext Ref:</label>
-                <input id="editExtRef" type="text" value="${safe(card.external_ref)}" placeholder="JIRA-123" class="form-input-full" />
+            <!-- Row 4: Tags -->
+            <div style="margin-top: 8px;">
+                <label class="form-label-small">Tags</label>
+                <div class="labels-container" style="display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px 0;">
+                    ${(card.labels || []).map(l => `
+                        <span class="badge" style="background: var(--bg2); padding: 4px 8px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
+                            #${escapeHtml(l)}
+                            <span class="remove-label" data-label="${escapeHtml(l)}" style="cursor: pointer; opacity: 0.7;">&times;</span>
+                        </span>
+                    `).join('')}
+                </div>
+                <div style="display: flex; gap: 4px;">
+                    <input id="newLabel" type="text" placeholder="Add tag..." style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
+                    <button id="btnAddLabel" class="btn" style="padding: 2px 8px;">+</button>
+                </div>
             </div>
 
-            <!-- Flags -->
+            <!-- Row 5: Flags -->
             <div style="margin-top: 8px;">
                 <label class="form-label-small">Flags</label>
                 <div style="display: flex; gap: 12px; margin-top: 4px; flex-wrap: wrap;">
@@ -1962,6 +2005,12 @@ async function openDetail(card) {
                 </div>
             </div>
 
+            <!-- Row 6: Ext Ref -->
+            <div class="form-row-wide-label">
+                <label class="form-label">Ext Ref:</label>
+                <input id="editExtRef" type="text" value="${safe(card.external_ref)}" placeholder="JIRA-123" class="form-input-full" />
+            </div>
+
             <hr class="form-hr">
 
             <div class="markdown-fields-container">
@@ -1971,27 +2020,10 @@ async function openDetail(card) {
                 ${createMarkdownField("Notes", "editNotes", card.notes)}
             </div>
 
-            <!-- Relationships & Tags -->
+            <!-- Relationships -->
             <div style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                    <div>
-                         <label style="font-size: 10px; color: var(--muted); text-transform: uppercase;">Tags</label>
-                         <div class="labels-container" style="display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px 0;">
-                            ${(card.labels || []).map(l => `
-                                <span class="badge" style="background: var(--bg2); padding: 4px 8px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
-                                    #${escapeHtml(l)}
-                                    <span class="remove-label" data-label="${escapeHtml(l)}" style="cursor: pointer; opacity: 0.7;">&times;</span>
-                                </span>
-                            `).join('')}
-                         </div>
-                         <div style="display: flex; gap: 4px;">
-                            <input id="newLabel" type="text" placeholder="Add tag..." style="flex: 1; margin: 0; font-size: 12px; padding: 4px;" />
-                            <button id="btnAddLabel" class="btn" style="padding: 2px 8px;">+</button>
-                         </div>
-                    </div>
-                    <div id="structureSection">
-                        ${renderStructureSection()}
-                    </div>
+                <div id="structureSection">
+                    ${renderStructureSection()}
                 </div>
             </div>
             <datalist id="${issueOptionsId}">

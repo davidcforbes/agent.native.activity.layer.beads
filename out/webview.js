@@ -112,6 +112,7 @@ function getWebviewHtml(webview, extensionUri) {
             <span class="dropdown-arrow">▼</span>
           </button>
           <div id="filterStatusDropdown" class="status-dropdown hidden">
+            <label class="status-option"><input type="checkbox" value="" checked /> All</label>
             <label class="status-option"><input type="checkbox" value="open" /> Open</label>
             <label class="status-option"><input type="checkbox" value="in_progress" /> In Progress</label>
             <label class="status-option"><input type="checkbox" value="blocked" /> Blocked</label>
