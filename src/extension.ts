@@ -140,7 +140,11 @@ export function activate(context: vscode.ExtensionContext) {
               await daemonManager.start();
               output.appendLine('[Extension] Daemon started successfully');
               // Update status immediately after starting
-              setTimeout(updateDaemonStatus, 1000); // Give daemon time to initialize
+              setTimeout(() => {
+                updateDaemonStatus().catch(err => {
+                  output.appendLine(`[Extension] Error updating daemon status after start: ${sanitizeError(err)}`);
+                });
+              }, 1000); // Give daemon time to initialize
             } catch (startError) {
               output.appendLine(`[Extension] Failed to auto-start daemon: ${sanitizeError(startError)}`);
               // Show notification with option to start manually
@@ -150,10 +154,16 @@ export function activate(context: vscode.ExtensionContext) {
                 'Disable Daemon Mode'
               ).then(action => {
                 if (action === 'Start Daemon') {
-                  vscode.commands.executeCommand('beadsKanban.showDaemonActions');
+                  vscode.commands.executeCommand('beadsKanban.showDaemonActions').then(undefined, err => {
+                    output.appendLine(`[Extension] Error executing showDaemonActions command: ${sanitizeError(err)}`);
+                  });
                 } else if (action === 'Disable Daemon Mode') {
-                  vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true);
+                  vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true).then(undefined, err => {
+                    output.appendLine(`[Extension] Error disabling daemon mode: ${sanitizeError(err)}`);
+                  });
                 }
+              }).then(undefined, err => {
+                output.appendLine(`[Extension] Error in showWarningMessage handler: ${sanitizeError(err)}`);
               });
             }
           }
@@ -304,8 +314,9 @@ export function activate(context: vscode.ExtensionContext) {
     loadedRanges.set('closed', []);
 
     const post = (msg: ExtMsg) => {
-      if (isDisposed) {
-        output.appendLine(`[Extension] Attempted to post to disposed webview: ${msg.type}`);
+      // Check both disposal flag and cancellation token to prevent race conditions
+      if (isDisposed || cancellationToken.cancelled) {
+        output.appendLine(`[Extension] Attempted to post to disposed/cancelled webview: ${msg.type}`);
         return;
       }
       try {
@@ -313,6 +324,7 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (e) {
         output.appendLine(`[Extension] Error posting message: ${sanitizeError(e)}`);
         isDisposed = true; // Mark as disposed if posting fails
+        cancellationToken.cancelled = true; // Also cancel token
       }
     };
 
@@ -883,6 +895,12 @@ export function activate(context: vscode.ExtensionContext) {
           clearTimeout(refreshTimeout);
         }
         refreshTimeout = setTimeout(async () => {
+          // Clear timeout reference immediately to prevent race conditions
+          // This must happen BEFORE any awaits, otherwise a new file change
+          // could come in and see the old timeout reference
+          const currentTimeout = refreshTimeout;
+          refreshTimeout = null;
+
           try {
             // Reload database from disk to pick up external changes
             await adapter.reloadDatabase();
@@ -902,10 +920,10 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showWarningMessage(
               `Beads auto-refresh failed: ${errorMsg}. Use the Refresh button to try again.`
             );
+          } finally {
+            // Reset change tracking after refresh completes
+            changeCount = 0;
           }
-          // Reset change tracking after refresh completes
-          changeCount = 0;
-          refreshTimeout = null;
         }, 300);
       };
       watcher.onDidChange(refresh);

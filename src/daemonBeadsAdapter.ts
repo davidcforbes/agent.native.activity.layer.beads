@@ -636,6 +636,10 @@ export class DaemonBeadsAdapter {
         case 'in_progress':
           // Use bd list with status filter
           // LIMITATION: bd list supports --limit but not --offset
+          // TODO: Add --offset flag to bd CLI for efficient pagination (see beads issue agent.native.activity.layer.beads-6u4m)
+          if (offset > 500) {
+            this.output.appendLine(`[DaemonBeadsAdapter] Warning: Large offset (${offset}) for in_progress column may cause performance issues`);
+          }
           const inProgressResult = await this.execBd(['list', '--status=in_progress', '--json', '--limit', String(offset + limit)]);
           basicIssues = Array.isArray(inProgressResult) ? inProgressResult.slice(offset, offset + limit) : [];
           break;
@@ -653,12 +657,20 @@ export class DaemonBeadsAdapter {
 
         case 'closed':
           // Use bd list with status filter (supports --limit)
+          // LIMITATION: bd list supports --limit but not --offset
+          if (offset > 500) {
+            this.output.appendLine(`[DaemonBeadsAdapter] Warning: Large offset (${offset}) for closed column may cause performance issues`);
+          }
           const closedResult = await this.execBd(['list', '--status=closed', '--json', '--limit', String(offset + limit)]);
           basicIssues = Array.isArray(closedResult) ? closedResult.slice(offset, offset + limit) : [];
           break;
 
         case 'open':
           // Use bd list with status filter (supports --limit)
+          // LIMITATION: bd list supports --limit but not --offset
+          if (offset > 500) {
+            this.output.appendLine(`[DaemonBeadsAdapter] Warning: Large offset (${offset}) for open column may cause performance issues`);
+          }
           const openResult = await this.execBd(['list', '--status=open', '--json', '--limit', String(offset + limit)]);
           basicIssues = Array.isArray(openResult) ? openResult.slice(offset, offset + limit) : [];
           break;

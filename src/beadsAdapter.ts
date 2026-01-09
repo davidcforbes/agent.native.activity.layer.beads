@@ -19,6 +19,9 @@ export class BeadsAdapter {
   private lastSaveTime = 0;
   private lastKnownMtime = 0; // Track file modification time to detect external changes
 
+  // Lock for save operations to prevent race conditions
+  private saveLock = false;
+
   constructor(private readonly output: vscode.OutputChannel) {}
 
   public dispose() {
@@ -190,14 +193,29 @@ export class BeadsAdapter {
    * 3. No dirty data is lost when reloading from disk
    */
   private async flushPendingSaves(): Promise<void> {
-    // Cancel any scheduled save and execute immediately if needed
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout);
-      this.saveTimeout = null;
+    // Wait for save lock to prevent race conditions
+    const MAX_LOCK_WAIT_MS = 10000; // 10 seconds max wait
+    const startWait = Date.now();
+    while (this.saveLock) {
+      if (Date.now() - startWait > MAX_LOCK_WAIT_MS) {
+        this.output.appendLine('[BeadsAdapter] WARNING: Save lock timeout - forcing lock release');
+        this.saveLock = false;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 10));
     }
 
-    // If we have dirty data and aren't currently saving, save now
-    if (this.isDirty && !this.isSaving) {
+    // Acquire lock
+    this.saveLock = true;
+    try {
+      // Cancel any scheduled save and execute immediately if needed
+      if (this.saveTimeout) {
+        clearTimeout(this.saveTimeout);
+        this.saveTimeout = null;
+      }
+
+      // If we have dirty data and aren't currently saving, save now
+      if (this.isDirty && !this.isSaving) {
       this.isDirty = false;
       this.isSaving = true;
       try {
@@ -211,12 +229,25 @@ export class BeadsAdapter {
       }
     }
 
-    // If save is in progress (shouldn't happen but be defensive), wait for it
-    while (this.isSaving) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+      // If save is in progress (shouldn't happen but be defensive), wait for it with timeout
+      let saveWaitAttempts = 0;
+      const MAX_SAVE_WAIT_ATTEMPTS = 200; // 200 * 50ms = 10 seconds max wait
+      while (this.isSaving && saveWaitAttempts < MAX_SAVE_WAIT_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        saveWaitAttempts++;
+      }
 
-    this.output.appendLine('[BeadsAdapter] Pending saves flushed successfully');
+      if (this.isSaving) {
+        this.output.appendLine('[BeadsAdapter] WARNING: Save timeout - isSaving flag stuck. Forcing completion.');
+        this.isSaving = false; // Force reset to prevent permanent hang
+        throw new Error('Timeout waiting for save completion after 10 seconds');
+      }
+
+      this.output.appendLine('[BeadsAdapter] Pending saves flushed successfully');
+    } finally {
+      // Always release lock
+      this.saveLock = false;
+    }
   }
 
   public async reloadDatabase(): Promise<void> {
@@ -280,9 +311,18 @@ export class BeadsAdapter {
    * This prevents the race condition where mutations occur during reload.
    */
   private async waitForReloadComplete(): Promise<void> {
-    while (this.isReloading) {
+    let reloadWaitAttempts = 0;
+    const MAX_RELOAD_WAIT_ATTEMPTS = 400; // 400 * 50ms = 20 seconds max wait
+    while (this.isReloading && reloadWaitAttempts < MAX_RELOAD_WAIT_ATTEMPTS) {
       this.output.appendLine('[BeadsAdapter] Waiting for database reload to complete...');
       await new Promise(resolve => setTimeout(resolve, 50));
+      reloadWaitAttempts++;
+    }
+
+    if (this.isReloading) {
+      this.output.appendLine('[BeadsAdapter] WARNING: Reload timeout - isReloading flag stuck. Forcing completion.');
+      this.isReloading = false; // Force reset to prevent permanent hang
+      throw new Error('Timeout waiting for database reload completion after 20 seconds');
     }
   }
 
