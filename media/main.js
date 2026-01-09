@@ -1066,19 +1066,28 @@ async function renderTable() {
             .filter(Boolean);
     }
 
-    // Build table HTML
+    // Build table HTML with pagination controls in header
     let tableHtml = `
         <div class="table-view">
             <div class="table-controls">
-                <label for="pageSizeSelect">Rows per page:</label>
-                <select id="pageSizeSelect" class="page-size-select">
-                    <option value="25" ${tablePaginationState.pageSize === 25 ? 'selected' : ''}>25</option>
-                    <option value="50" ${tablePaginationState.pageSize === 50 ? 'selected' : ''}>50</option>
-                    <option value="100" ${tablePaginationState.pageSize === 100 ? 'selected' : ''}>100</option>
-                    <option value="250" ${tablePaginationState.pageSize === 250 ? 'selected' : ''}>250</option>
-                    <option value="500" ${tablePaginationState.pageSize === 500 ? 'selected' : ''}>500</option>
-                </select>
-                <span class="pagination-info">Showing ${startIdx + 1}-${endIdx} of ${totalCount} rows</span>
+                <div class="table-controls-left">
+                    <label for="pageSizeSelect">Rows per page:</label>
+                    <select id="pageSizeSelect" class="page-size-select">
+                        <option value="25" ${tablePaginationState.pageSize === 25 ? 'selected' : ''}>25</option>
+                        <option value="50" ${tablePaginationState.pageSize === 50 ? 'selected' : ''}>50</option>
+                        <option value="100" ${tablePaginationState.pageSize === 100 ? 'selected' : ''}>100</option>
+                        <option value="250" ${tablePaginationState.pageSize === 250 ? 'selected' : ''}>250</option>
+                        <option value="500" ${tablePaginationState.pageSize === 500 ? 'selected' : ''}>500</option>
+                    </select>
+                    <span class="pagination-info">Showing ${startIdx + 1}-${endIdx} of ${totalCount} rows</span>
+                </div>
+                <div class="table-controls-right">
+                    ${totalPages > 1 ? `
+                        <button class="btn pagination-btn" id="tablePrevPage" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
+                        <span class="pagination-info">Page ${currentPage + 1} of ${totalPages}</span>
+                        <button class="btn pagination-btn" id="tableNextPage" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+                    ` : ''}
+                </div>
             </div>
             <div class="table-wrapper">
                 <table class="issues-table">
@@ -1125,25 +1134,15 @@ async function renderTable() {
         });
     }
 
-    // Add pagination controls if there are multiple pages
+    // Add pagination button handlers (buttons are now in header)
     if (totalPages > 1) {
-        const paginationDiv = document.createElement('div');
-        paginationDiv.className = 'table-pagination';
-        paginationDiv.innerHTML = `
-            <button class="btn pagination-btn" id="tablePrevPage" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
-            <span class="pagination-info">Page ${currentPage + 1} of ${totalPages}</span>
-            <button class="btn pagination-btn" id="tableNextPage" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
-        `;
-        boardEl.appendChild(paginationDiv);
-
-        // Add pagination button handlers
         const prevBtn = document.getElementById('tablePrevPage');
         const nextBtn = document.getElementById('tableNextPage');
         
         if (prevBtn) {
             prevBtn.addEventListener('click', async () => {
                 if (tablePaginationState.currentPage > 0) {
-                    await loadTablePage(tablePaginationState.currentPage - 1);
+                    tablePaginationState.currentPage--;
                     await renderTable();
                 }
             });
@@ -1152,7 +1151,7 @@ async function renderTable() {
         if (nextBtn) {
             nextBtn.addEventListener('click', async () => {
                 if (tablePaginationState.currentPage < totalPages - 1) {
-                    await loadTablePage(tablePaginationState.currentPage + 1);
+                    tablePaginationState.currentPage++;
                     await renderTable();
                 }
             });
