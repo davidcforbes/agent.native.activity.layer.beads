@@ -72,6 +72,12 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
            <option value="epic">Epic</option>
            <option value="chore">Chore</option>
         </select>
+        <select id="filterStatus" class="select status-select" multiple size="1" title="Status: Hold Ctrl/Cmd to select multiple">
+           <option value="open">Open</option>
+           <option value="in_progress">In Progress</option>
+           <option value="blocked">Blocked</option>
+           <option value="closed">Closed</option>
+        </select>
         <button id="clearFiltersBtn" class="btn" title="Clear all filters">Clear Filters</button>
       </div>
       <button id="refreshBtn" class="btn" title="Refresh board (${modKey}+R)">Refresh</button>

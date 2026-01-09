@@ -16,6 +16,7 @@ const copyContextBtn = document.getElementById("copyContextBtn");
 
 const filterPriority = document.getElementById("filterPriority");
 const filterType = document.getElementById("filterType");
+const filterStatus = document.getElementById("filterStatus");
 const filterSearch = document.getElementById("filterSearch");
 const clearFiltersBtn = document.getElementById("clearFiltersBtn");
 
@@ -467,8 +468,11 @@ function getFilteredCards() {
     const tVal = filterType.value;
     const sVal = filterSearch.value.toLowerCase().trim();
     
+    // Get selected status values from multi-select
+    const selectedStatuses = Array.from(filterStatus.selectedOptions).map(opt => opt.value);
+    
     // If no filters, return all cards from cache
-    if (!pVal && !tVal && !sVal) {
+    if (!pVal && !tVal && !sVal && selectedStatuses.length === 0) {
         return Array.from(cardCache.values());
     }
     
@@ -483,6 +487,27 @@ function getFilteredCards() {
         // Type filter
         if (tVal !== "" && card.issue_type !== tVal) {
             continue;
+        }
+        
+        // Status filter (multi-select)
+        if (selectedStatuses.length > 0) {
+            // Determine card's effective status for filtering
+            // This should match the columnForCard logic
+            let cardStatus;
+            if (card.status === "closed") {
+                cardStatus = "closed";
+            } else if (card.is_ready) {
+                cardStatus = "open";
+            } else if (card.status === "in_progress") {
+                cardStatus = "in_progress";
+            } else {
+                // If it's open but not ready, it's blocked
+                cardStatus = "blocked";
+            }
+            
+            if (!selectedStatuses.includes(cardStatus)) {
+                continue;
+            }
         }
         
         // Search filter (title, description, ID, or labels)
@@ -717,7 +742,7 @@ function renderKanban() {
         // Show "loaded / total" format for incremental loading
         const colState = columnState[col.key];
         const filteredCount = (byCol[col.key] || []).length;
-        const hasActiveFilters = filterPriority.value || filterType.value || filterSearch.value;
+        const hasActiveFilters = filterPriority.value || filterType.value || filterStatus.selectedOptions.length > 0 || filterSearch.value;
 
         if (colState && colState.totalCount > colState.cards.length) {
             // Partial load: show "filtered (loaded / total)"
@@ -1322,12 +1347,14 @@ const debouncedRender = debounce(render, 300);
 
 filterPriority.addEventListener("change", render); // Immediate for dropdown
 filterType.addEventListener("change", render); // Immediate for dropdown
+filterStatus.addEventListener("change", render); // Immediate for multi-select
 filterSearch.addEventListener("input", debouncedRender); // Debounced for text input
 
 // Clear all filters
 clearFiltersBtn.addEventListener("click", () => {
     filterPriority.value = '';
     filterType.value = '';
+    filterStatus.selectedIndex = -1; // Clear all selections in multi-select
     filterSearch.value = '';
     render();
 });
