@@ -778,7 +778,7 @@ function renderKanban() {
         // Show "loaded / total" format for incremental loading
         const colState = columnState[col.key];
         const filteredCount = (byCol[col.key] || []).length;
-        const hasActiveFilters = filterPriority.value || filterType.value || filterStatus.selectedOptions.length > 0 || filterSearch.value;
+        const hasActiveFilters = filterPriority.value || filterType.value || getSelectedStatuses().length > 0 || filterSearch.value;
 
         if (colState && colState.totalCount > colState.cards.length) {
             // Partial load: show "filtered (loaded / total)"
