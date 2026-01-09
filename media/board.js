@@ -890,6 +890,10 @@ function renderKanban() {
 
         // Native drag events removed. Sortable handles it.
 
+        // Performance optimization: Use DocumentFragment for batch DOM operations
+        // This prevents reflow/repaint for each card, significantly improving render time for large datasets
+        const fragment = document.createDocumentFragment();
+
         for (const card of (byCol[col.key] || [])) {
             const el = document.createElement("div");
             el.className = "card";
@@ -977,8 +981,11 @@ function renderKanban() {
         <div class="badges">${badges.map(b => `<span class="badge ${b.cls || ''}">${escapeHtml(b.text)}</span>`).join("")}</div>
       `;
 
-            dropZone.appendChild(el);
+            fragment.appendChild(el);
         }
+
+        // Single DOM operation: append all cards at once
+        dropZone.appendChild(fragment);
 
         // Add loading spinner if column is loading
         // colState already declared at line 536
