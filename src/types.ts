@@ -50,6 +50,86 @@ export interface IssueRow {
   waiters: string | null;
 }
 
+// 3-Tier Progressive Loading Card Types
+
+/**
+ * Tier 1: Minimal card data from fast bd list query (100-300ms for 400 issues)
+ * Contains only essential fields for displaying cards in kanban columns
+ */
+export interface MinimalCard {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: number;
+  issue_type: string;
+  created_at: string;
+  created_by: string;
+  updated_at: string;
+  closed_at?: string | null;
+  close_reason?: string | null;
+  dependency_count: number;
+  dependent_count: number;
+}
+
+/**
+ * Tier 2: Enriched card with optional display enhancement fields
+ * Adds labels, assignee, etc. for better UI without full relationship data
+ */
+export interface EnrichedCard extends MinimalCard {
+  assignee?: string | null;
+  estimated_minutes?: number | null;
+  labels?: string[];
+  external_ref?: string | null;
+  pinned?: boolean;
+  blocked_by_count?: number;
+}
+
+/**
+ * Tier 3: Full card with all fields including relationships and comments
+ * Loaded on-demand when editing (50ms per issue via bd show)
+ */
+export interface FullCard extends EnrichedCard {
+  acceptance_criteria: string;
+  design: string;
+  notes: string;
+  due_at?: string | null;
+  defer_until?: string | null;
+
+  is_ready?: boolean;
+  is_template?: boolean;
+  ephemeral?: boolean;
+
+  // Event/Agent metadata
+  event_kind?: string | null;
+  actor?: string | null;
+  target?: string | null;
+  payload?: string | null;
+  sender?: string | null;
+  mol_type?: string | null;
+  role_type?: string | null;
+  rig?: string | null;
+  agent_state?: string | null;
+  last_activity?: string | null;
+  hook_bead?: string | null;
+  role_bead?: string | null;
+  await_type?: string | null;
+  await_id?: string | null;
+  timeout_ns?: number | null;
+  waiters?: string | null;
+
+  // Relationships
+  parent?: DependencyInfo;
+  children?: DependencyInfo[];
+  blocks?: DependencyInfo[];
+  blocked_by?: DependencyInfo[];
+  comments?: Comment[];
+}
+
+/**
+ * Legacy BoardCard interface - maintained for backward compatibility
+ * New code should use MinimalCard/EnrichedCard/FullCard hierarchy
+ */
 export interface BoardCard {
   id: string;
   title: string;

@@ -8,6 +8,8 @@ import { validateMarkdownFields, validateCommentContent } from "./markdownValida
 import {
   BoardData,
   BoardCard,
+  MinimalCard,
+  FullCard,
   BoardColumnKey,
   IssueStatus,
   IssueUpdateSchema,
@@ -25,12 +27,14 @@ import {
 type WebMsg =
   | { type: "board.load"; requestId: string }
   | { type: "board.refresh"; requestId: string }
+  | { type: "board.loadMinimal"; requestId: string }
   | { type: "board.loadColumn"; requestId: string; payload: { column: BoardColumnKey; offset: number; limit: number } }
   | { type: "board.loadMore"; requestId: string; payload: { column: BoardColumnKey } }
   | { type: "table.loadPage"; requestId: string; payload: { filters: any; sorting: Array<{ id: string; dir: 'asc' | 'desc' }>; offset: number; limit: number } }
   | { type: "repo.select"; requestId: string }
   | { type: "issue.create"; requestId: string; payload: { title: string; description?: string } }
   | { type: "issue.move"; requestId: string; payload: { id: string; toColumn: BoardColumnKey } }
+  | { type: "issue.getFull"; requestId: string; payload: { id: string } }
   | { type: "issue.addToChat"; requestId: string; payload: { text: string } }
   | { type: "issue.copyToClipboard"; requestId: string; payload: { text: string } }
   | { type: "issue.update"; requestId: string; payload: { id: string; updates: any } }
@@ -42,8 +46,10 @@ type WebMsg =
 
 type ExtMsg =
   | { type: "board.data"; requestId: string; payload: BoardData }
+  | { type: "board.minimal"; requestId: string; payload: { cards: MinimalCard[] } }
   | { type: "board.columnData"; requestId: string; payload: { column: BoardColumnKey; cards: BoardCard[]; offset: number; totalCount: number; hasMore: boolean } }
   | { type: "table.pageData"; requestId: string; payload: { cards: BoardCard[]; offset: number; totalCount: number; hasMore: boolean } }
+  | { type: "issue.full"; requestId: string; payload: { card: FullCard } }
   | { type: "mutation.ok"; requestId: string }
   | { type: "mutation.error"; requestId: string; error: string };
 
@@ -68,111 +74,6 @@ function validateBoardCards(cards: BoardCard[], output: vscode.OutputChannel): v
       notes: card.notes
     }, output);
   }
-}
-
-/**
- * Converts technical errors into user-friendly messages with actionable guidance.
- * Categorizes common failure scenarios and provides specific solutions.
- */
-function getUserFriendlyErrorMessage(error: unknown): string {
-  const errorMsg = error instanceof Error ? error.message : String(error);
-  const lowerMsg = errorMsg.toLowerCase();
-
-  // No .beads directory
-  if (lowerMsg.includes('enoent') || lowerMsg.includes('no .beads directory') || lowerMsg.includes('cannot find')) {
-    return 'No .beads directory found. Run `bd init` in your workspace to create one, or open a workspace that contains a .beads directory.';
-  }
-
-  // Database locked
-  if (lowerMsg.includes('sqlite_busy') || lowerMsg.includes('database is locked') || lowerMsg.includes('database lock')) {
-    return 'Database is locked by another application. Close other apps using the database, or wait for them to finish.';
-  }
-
-  // Corrupted database
-  if (lowerMsg.includes('corrupt') || lowerMsg.includes('malformed') || lowerMsg.includes('not a database')) {
-    return 'Database appears to be corrupted. Run `bd doctor` to diagnose and repair, or restore from a backup.';
-  }
-
-  // Daemon not running (specific to daemon adapter)
-  if (lowerMsg.includes('daemon') && (lowerMsg.includes('not running') || lowerMsg.includes('connection refused') || lowerMsg.includes('econnrefused'))) {
-    return 'Beads daemon is not running. Start it with `bd daemon start`, or disable daemon mode in settings.';
-  }
-
-  // Permission denied
-  if (lowerMsg.includes('eacces') || lowerMsg.includes('permission denied')) {
-    return 'Permission denied accessing .beads directory. Check file permissions and ensure you have read/write access.';
-  }
-
-  // Out of space
-  if (lowerMsg.includes('enospc') || lowerMsg.includes('no space left')) {
-    return 'No space left on device. Free up disk space and try again.';
-  }
-
-  // Generic fallback with sanitized message
-  return `Failed to load board: ${sanitizeError(error)}. Check the Output panel (Beads Kanban) for details.`;
-}
-
-/**
- * Converts Zod validation errors into user-friendly messages.
- * Parses technical Zod error structures and returns actionable guidance.
- */
-function formatZodError(zodError: any): string {
-  if (!zodError.issues || zodError.issues.length === 0) {
-    return 'Invalid data provided';
-  }
-
-  const messages = zodError.issues.map((issue: any) => {
-    const field = issue.path.length > 0 ? issue.path.join('.') : 'field';
-
-    switch (issue.code) {
-      case 'invalid_type':
-        if (issue.received === 'undefined' || issue.received === 'null') {
-          return `${field} is required`;
-        }
-        return `${field} must be a ${issue.expected}`;
-
-      case 'too_small':
-        if (issue.type === 'string') {
-          return `${field} must be at least ${issue.minimum} characters`;
-        }
-        if (issue.type === 'number') {
-          return `${field} must be at least ${issue.minimum}`;
-        }
-        return `${field} is too small`;
-
-      case 'too_big':
-        if (issue.type === 'string') {
-          return `${field} must be at most ${issue.maximum} characters`;
-        }
-        if (issue.type === 'number') {
-          return `${field} must be at most ${issue.maximum}`;
-        }
-        return `${field} is too large`;
-
-      case 'invalid_string':
-        if (issue.validation === 'email') {
-          return `${field} must be a valid email address`;
-        }
-        if (issue.validation === 'url') {
-          return `${field} must be a valid URL`;
-        }
-        if (issue.validation === 'datetime') {
-          return `${field} must be a valid date/time`;
-        }
-        if (issue.validation === 'regex') {
-          return `${field} format is invalid`;
-        }
-        return `${field} is not valid`;
-
-      case 'invalid_enum_value':
-        return `${field} must be one of: ${issue.options.join(', ')}`;
-
-      default:
-        return issue.message || `${field} is invalid`;
-    }
-  });
-
-  return messages.join('; ');
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -245,11 +146,7 @@ export function activate(context: vscode.ExtensionContext) {
               await daemonManager.start();
               output.appendLine('[Extension] Daemon started successfully');
               // Update status immediately after starting
-              setTimeout(() => {
-                updateDaemonStatus().catch(err => {
-                  output.appendLine(`[Extension] Error updating daemon status after start: ${sanitizeError(err)}`);
-                });
-              }, 1000); // Give daemon time to initialize
+              setTimeout(updateDaemonStatus, 1000); // Give daemon time to initialize
             } catch (startError) {
               output.appendLine(`[Extension] Failed to auto-start daemon: ${sanitizeError(startError)}`);
               // Show notification with option to start manually
@@ -259,16 +156,10 @@ export function activate(context: vscode.ExtensionContext) {
                 'Disable Daemon Mode'
               ).then(action => {
                 if (action === 'Start Daemon') {
-                  vscode.commands.executeCommand('beadsKanban.showDaemonActions').then(undefined, err => {
-                    output.appendLine(`[Extension] Error executing showDaemonActions command: ${sanitizeError(err)}`);
-                  });
+                  vscode.commands.executeCommand('beadsKanban.showDaemonActions');
                 } else if (action === 'Disable Daemon Mode') {
-                  vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true).then(undefined, err => {
-                    output.appendLine(`[Extension] Error disabling daemon mode: ${sanitizeError(err)}`);
-                  });
+                  vscode.workspace.getConfiguration('beadsKanban').update('useDaemonAdapter', false, true);
                 }
-              }).then(undefined, err => {
-                output.appendLine(`[Extension] Error in showWarningMessage handler: ${sanitizeError(err)}`);
               });
             }
           }
@@ -419,9 +310,8 @@ export function activate(context: vscode.ExtensionContext) {
     loadedRanges.set('closed', []);
 
     const post = (msg: ExtMsg) => {
-      // Check both disposal flag and cancellation token to prevent race conditions
-      if (isDisposed || cancellationToken.cancelled) {
-        output.appendLine(`[Extension] Attempted to post to disposed/cancelled webview: ${msg.type}`);
+      if (isDisposed) {
+        output.appendLine(`[Extension] Attempted to post to disposed webview: ${msg.type}`);
         return;
       }
       try {
@@ -429,7 +319,6 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (e) {
         output.appendLine(`[Extension] Error posting message: ${sanitizeError(e)}`);
         isDisposed = true; // Mark as disposed if posting fails
-        cancellationToken.cancelled = true; // Also cancel token
       }
     };
 
@@ -526,7 +415,6 @@ export function activate(context: vscode.ExtensionContext) {
           // Use getBoardMetadata() instead of getBoard() to avoid loading all issues
           const data = await adapter.getBoardMetadata();
           data.columnData = columnDataMap;
-          data.readOnly = readOnly; // Add read-only flag for webview
 
           // Validate markdown content in column cards (defense-in-depth)
           // Note: data.cards is now empty array from getBoardMetadata, actual cards are in columnData
@@ -549,9 +437,8 @@ export function activate(context: vscode.ExtensionContext) {
           // Fallback to legacy full load
           output.appendLine(`[Extension] Adapter does not support incremental loading, using legacy getBoard()`);
           const data = await adapter.getBoard();
-          data.readOnly = readOnly; // Add read-only flag for webview
           output.appendLine(`[Extension] Got board data: ${data.cards?.length || 0} cards`);
-
+          
           // Validate markdown content in all cards (defense-in-depth)
           validateBoardCards(data.cards || [], output);
           // Check cancellation before posting to prevent race with disposal
@@ -567,8 +454,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in sendBoard: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          // Use user-friendly error message for display, but log technical details
-          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
         }
       }
     };
@@ -584,7 +470,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Validate the request
         const validation = BoardLoadColumnSchema.safeParse({ column, offset, limit });
         if (!validation.success) {
-          post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${formatZodError(validation.error)}` });
+          post({ type: "mutation.error", requestId, error: `Invalid loadColumn request: ${validation.error.message}` });
           return;
         }
 
@@ -614,7 +500,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in handleLoadColumn: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
         }
       }
     };
@@ -632,7 +518,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!validation.success) {
           // Check cancellation before posting error
           if (!cancellationToken.cancelled) {
-            post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${formatZodError(validation.error)}` });
+            post({ type: "mutation.error", requestId, error: `Invalid loadMore request: ${validation.error.message}` });
           }
           return;
         }
@@ -652,7 +538,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in handleLoadMore: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
         }
       }
     };
@@ -698,7 +584,7 @@ export function activate(context: vscode.ExtensionContext) {
         output.appendLine(`[Extension] Error in handleTableLoadPage: ${sanitizeError(e)}`);
         // Check both disposal flag and cancellation token
         if (!isDisposed && !cancellationToken.cancelled) {
-          post({ type: "mutation.error", requestId, error: getUserFriendlyErrorMessage(e) });
+          post({ type: "mutation.error", requestId, error: sanitizeError(e) });
         }
       }
     };
@@ -722,6 +608,80 @@ export function activate(context: vscode.ExtensionContext) {
       if (msg.type === "board.loadMore") {
         const { column } = msg.payload;
         await handleLoadMore(msg.requestId, column);
+        return;
+      }
+
+      if (msg.type === "board.loadMinimal") {
+        try {
+          // Check if adapter supports fast loading
+          if (typeof (adapter as any).getBoardMinimal !== 'function') {
+            post({ type: "mutation.error", requestId: msg.requestId, error: "Adapter does not support fast minimal loading. Please enable daemon mode or update your adapter." });
+            return;
+          }
+          
+          output.appendLine(`[Extension] Loading minimal board data`);
+          const cards = await (adapter as any).getBoardMinimal();
+          output.appendLine(`[Extension] Loaded ${cards.length} minimal cards`);
+          
+          // Check cancellation before posting
+          if (!cancellationToken.cancelled) {
+            post({ type: "board.minimal", requestId: msg.requestId, payload: { cards } });
+          } else {
+            output.appendLine(`[Extension] Skipped posting board.minimal - operation cancelled`);
+          }
+        } catch (e) {
+          output.appendLine(`[Extension] Error loading minimal board: ${sanitizeError(e)}`);
+          if (!isDisposed && !cancellationToken.cancelled) {
+            post({ type: "mutation.error", requestId: msg.requestId, error: sanitizeError(e) });
+          }
+        }
+        return;
+      }
+
+      if (msg.type === "issue.getFull") {
+        try {
+          const issueId = msg.payload.id;
+          
+          // Validate issue ID
+          if (!issueId || typeof issueId !== 'string' || issueId.length === 0 || issueId.length > 100) {
+            post({ type: "mutation.error", requestId: msg.requestId, error: "Invalid issue ID provided" });
+            return;
+          }
+          
+          // Check if adapter supports fast loading
+          if (typeof (adapter as any).getIssueFull !== 'function') {
+            post({ type: "mutation.error", requestId: msg.requestId, error: "Adapter does not support full issue loading. Please enable daemon mode or update your adapter." });
+            return;
+          }
+          
+          output.appendLine(`[Extension] Loading full details for issue ${issueId}`);
+          const card = await (adapter as any).getIssueFull(issueId);
+          output.appendLine(`[Extension] Loaded full card for ${issueId}`);
+          
+          // Validate markdown content (defense-in-depth)
+          const fullCardValid = validateMarkdownFields({
+            description: card.description,
+            acceptance_criteria: card.acceptance_criteria,
+            design: card.design,
+            notes: card.notes
+          }, output);
+          if (!fullCardValid) {
+            output.appendLine(`[Extension] Warning: Suspicious content detected in full card ${issueId}`);
+            // Log warning but allow return (defense-in-depth, not blocking)
+          }
+          
+          // Check cancellation before posting
+          if (!cancellationToken.cancelled) {
+            post({ type: "issue.full", requestId: msg.requestId, payload: { card } });
+          } else {
+            output.appendLine(`[Extension] Skipped posting issue.full - operation cancelled`);
+          }
+        } catch (e) {
+          output.appendLine(`[Extension] Error loading full issue: ${sanitizeError(e)}`);
+          if (!isDisposed && !cancellationToken.cancelled) {
+            post({ type: "mutation.error", requestId: msg.requestId, error: sanitizeError(e) });
+          }
+        }
         return;
       }
 
@@ -787,7 +747,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (msg.type === "issue.create") {
           const validation = IssueCreateSchema.safeParse(msg.payload);
           if (!validation.success) {
-            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${formatZodError(validation.error)}` });
+            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid issue data: ${validation.error.message}` });
             return;
           }
           
@@ -814,7 +774,7 @@ export function activate(context: vscode.ExtensionContext) {
             status: toStatus
           });
           if (!validation.success) {
-            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid move data: ${formatZodError(validation.error)}` });
+            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid move data: ${validation.error.message}` });
             return;
           }
           await adapter.setIssueStatus(validation.data.id, validation.data.status);
@@ -847,7 +807,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (msg.type === "issue.update") {
           const validation = IssueUpdateSchema.safeParse(msg.payload);
           if (!validation.success) {
-            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${formatZodError(validation.error)}` });
+            post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid update data: ${validation.error.message}` });
             return;
           }
           
@@ -880,7 +840,7 @@ export function activate(context: vscode.ExtensionContext) {
               author
             });
             if (!validation.success) {
-              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${formatZodError(validation.error)}` });
+              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid comment data: ${validation.error.message}` });
               return;
             }
             
@@ -903,7 +863,7 @@ export function activate(context: vscode.ExtensionContext) {
               label: msg.payload.label
             });
             if (!validation.success) {
-              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${formatZodError(validation.error)}` });
+              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
               return;
             }
             await adapter.addLabel(validation.data.id, validation.data.label);
@@ -918,7 +878,7 @@ export function activate(context: vscode.ExtensionContext) {
               label: msg.payload.label
             });
             if (!validation.success) {
-              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${formatZodError(validation.error)}` });
+              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid label data: ${validation.error.message}` });
               return;
             }
             await adapter.removeLabel(validation.data.id, validation.data.label);
@@ -934,7 +894,7 @@ export function activate(context: vscode.ExtensionContext) {
               type: msg.payload.type
             });
             if (!validation.success) {
-              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${formatZodError(validation.error)}` });
+              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
               return;
             }
             await adapter.addDependency(validation.data.id, validation.data.otherId, validation.data.type);
@@ -949,7 +909,7 @@ export function activate(context: vscode.ExtensionContext) {
               otherId: msg.payload.otherId
             });
             if (!validation.success) {
-              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${formatZodError(validation.error)}` });
+              post({ type: "mutation.error", requestId: msg.requestId, error: `Invalid dependency data: ${validation.error.message}` });
               return;
             }
             await adapter.removeDependency(validation.data.id, validation.data.otherId);
@@ -1003,12 +963,6 @@ export function activate(context: vscode.ExtensionContext) {
           clearTimeout(refreshTimeout);
         }
         refreshTimeout = setTimeout(async () => {
-          // Clear timeout reference immediately to prevent race conditions
-          // This must happen BEFORE any awaits, otherwise a new file change
-          // could come in and see the old timeout reference
-          const currentTimeout = refreshTimeout;
-          refreshTimeout = null;
-
           try {
             // Reload database from disk to pick up external changes
             await adapter.reloadDatabase();
@@ -1028,10 +982,10 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showWarningMessage(
               `Beads auto-refresh failed: ${errorMsg}. Use the Refresh button to try again.`
             );
-          } finally {
-            // Reset change tracking after refresh completes
-            changeCount = 0;
           }
+          // Reset change tracking after refresh completes
+          changeCount = 0;
+          refreshTimeout = null;
         }, 300);
       };
       watcher.onDidChange(refresh);

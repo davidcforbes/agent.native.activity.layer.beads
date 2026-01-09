@@ -4,6 +4,8 @@ import {
   BoardData,
   BoardColumn,
   BoardCard,
+  MinimalCard,
+  FullCard,
   IssueStatus,
   DependencyInfo,
   Comment
@@ -476,6 +478,242 @@ export class DaemonBeadsAdapter {
     } catch (error) {
       throw new Error(`Failed to get board data: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * NEW: Get minimal board data for fast initial load (Tier 1)
+   * Uses single bd list query without bd show - expected 100-300ms for 400 issues
+   * Returns only essential fields for displaying cards in kanban columns
+   */
+  public async getBoardMinimal(): Promise<MinimalCard[]> {
+    try {
+      // Single fast query - no batching needed
+      const issues = await this.execBd(['list', '--json', '--all', '--limit', '10000']);
+
+      if (!Array.isArray(issues)) {
+        this.output.appendLine('[DaemonBeadsAdapter] getBoardMinimal: bd list returned non-array');
+        return [];
+      }
+
+      // Map to MinimalCard - no relationships, just core fields
+      const minimalCards: MinimalCard[] = issues.map((issue: any) => ({
+        id: issue.id,
+        title: issue.title || '',
+        description: issue.description || '',
+        status: issue.status || 'open',
+        priority: typeof issue.priority === 'number' ? issue.priority : 2,
+        issue_type: issue.issue_type || 'task',
+        created_at: issue.created_at || new Date().toISOString(),
+        created_by: issue.created_by || 'unknown',
+        updated_at: issue.updated_at || issue.created_at || new Date().toISOString(),
+        closed_at: issue.closed_at || null,
+        close_reason: issue.close_reason || null,
+        dependency_count: issue.dependency_count || 0,
+        dependent_count: issue.dependent_count || 0
+      }));
+
+      this.output.appendLine(`[DaemonBeadsAdapter] getBoardMinimal: Loaded ${minimalCards.length} minimal cards`);
+      return minimalCards;
+    } catch (error) {
+      throw new Error(`Failed to get minimal board data: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * NEW: Get full details for a single issue on-demand (Tier 3)
+   * Uses single bd show query - expected 50ms per issue
+   * Returns all fields including relationships, comments, and event/agent metadata
+   */
+  public async getIssueFull(issueId: string): Promise<FullCard> {
+    try {
+      this.validateIssueId(issueId);
+
+      // Single fast query for one issue
+      const result = await this.execBd(['show', '--json', issueId]);
+
+      if (!Array.isArray(result) || result.length === 0) {
+        throw new Error(`Issue not found: ${issueId}`);
+      }
+
+      const issue = result[0];
+
+      // Build dependency information
+      const parent = this.extractParentDependency(issue);
+      const children = this.extractChildrenDependencies(issue);
+      const blocks = this.extractBlocksDependencies(issue);
+      const blocked_by = this.extractBlockedByDependencies(issue);
+
+      // Map labels
+      let labels: string[] = [];
+      if (issue.labels && Array.isArray(issue.labels)) {
+        labels = issue.labels.map((l: any) => typeof l === 'string' ? l : l.label);
+      }
+
+      // Map comments
+      const comments: Comment[] = [];
+      if (issue.comments && Array.isArray(issue.comments)) {
+        comments.push(...issue.comments.map((c: any) => ({
+          id: c.id,
+          issue_id: issueId,
+          author: c.author || 'unknown',
+          text: c.text || '',
+          created_at: c.created_at
+        })));
+      }
+
+      const fullCard: FullCard = {
+        // MinimalCard fields
+        id: issue.id,
+        title: issue.title || '',
+        description: issue.description || '',
+        status: issue.status || 'open',
+        priority: typeof issue.priority === 'number' ? issue.priority : 2,
+        issue_type: issue.issue_type || 'task',
+        created_at: issue.created_at || new Date().toISOString(),
+        created_by: issue.created_by || 'unknown',
+        updated_at: issue.updated_at || issue.created_at || new Date().toISOString(),
+        closed_at: issue.closed_at || null,
+        close_reason: issue.close_reason || null,
+        dependency_count: issue.dependency_count || 0,
+        dependent_count: issue.dependent_count || 0,
+
+        // EnrichedCard fields
+        assignee: issue.assignee || null,
+        estimated_minutes: issue.estimated_minutes || null,
+        labels,
+        external_ref: issue.external_ref || null,
+        pinned: issue.pinned === 1 || issue.pinned === true,
+        blocked_by_count: blocked_by.length,
+
+        // FullCard fields
+        acceptance_criteria: issue.acceptance_criteria || '',
+        design: issue.design || '',
+        notes: issue.notes || '',
+        due_at: issue.due_at || null,
+        defer_until: issue.defer_until || null,
+        is_ready: issue.status === 'open' && blocked_by.length === 0,
+        is_template: issue.is_template === 1 || issue.is_template === true,
+        ephemeral: issue.ephemeral === 1 || issue.ephemeral === true,
+
+        // Event/Agent metadata
+        event_kind: issue.event_kind || null,
+        actor: issue.actor || null,
+        target: issue.target || null,
+        payload: issue.payload || null,
+        sender: issue.sender || null,
+        mol_type: issue.mol_type || null,
+        role_type: issue.role_type || null,
+        rig: issue.rig || null,
+        agent_state: issue.agent_state || null,
+        last_activity: issue.last_activity || null,
+        hook_bead: issue.hook_bead || null,
+        role_bead: issue.role_bead || null,
+        await_type: issue.await_type || null,
+        await_id: issue.await_id || null,
+        timeout_ns: issue.timeout_ns || null,
+        waiters: issue.waiters || null,
+
+        // Relationships
+        parent,
+        children,
+        blocks,
+        blocked_by,
+        comments
+      };
+
+      this.output.appendLine(`[DaemonBeadsAdapter] getIssueFull: Loaded full details for ${issueId}`);
+      return fullCard;
+    } catch (error) {
+      throw new Error(`Failed to get full issue details: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Extract parent dependency from issue data
+   */
+  private extractParentDependency(issue: any): DependencyInfo | undefined {
+    if (!issue.dependents || !Array.isArray(issue.dependents)) {
+      return undefined;
+    }
+
+    // Find parent-child dependency where this issue is the child
+    for (const dep of issue.dependents) {
+      if (dep.dependency_type === 'parent-child' && dep.id !== issue.id) {
+        return {
+          id: dep.id,
+          title: dep.title,
+          created_at: dep.created_at,
+          created_by: dep.created_by || 'unknown',
+          metadata: dep.metadata,
+          thread_id: dep.thread_id
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Extract children dependencies from issue data
+   */
+  private extractChildrenDependencies(issue: any): DependencyInfo[] {
+    const children: DependencyInfo[] = [];
+
+    if (!issue.dependents || !Array.isArray(issue.dependents)) {
+      return children;
+    }
+
+    for (const dep of issue.dependents) {
+      if (dep.dependency_type === 'parent-child' && dep.id !== issue.id) {
+        children.push({
+          id: dep.id,
+          title: dep.title,
+          created_at: dep.created_at,
+          created_by: dep.created_by || 'unknown',
+          metadata: dep.metadata,
+          thread_id: dep.thread_id
+        });
+      }
+    }
+
+    return children;
+  }
+
+  /**
+   * Extract blocks dependencies from issue data
+   */
+  private extractBlocksDependencies(issue: any): DependencyInfo[] {
+    const blocks: DependencyInfo[] = [];
+
+    if (!issue.dependents || !Array.isArray(issue.dependents)) {
+      return blocks;
+    }
+
+    for (const dep of issue.dependents) {
+      if (dep.dependency_type === 'blocks' && dep.id !== issue.id) {
+        blocks.push({
+          id: dep.id,
+          title: dep.title,
+          created_at: dep.created_at,
+          created_by: dep.created_by || 'unknown',
+          metadata: dep.metadata,
+          thread_id: dep.thread_id
+        });
+      }
+    }
+
+    return blocks;
+  }
+
+  /**
+   * Extract blocked_by dependencies from issue data
+   */
+  private extractBlockedByDependencies(issue: any): DependencyInfo[] {
+    // Note: bd show returns "dependents" which are issues that depend on THIS issue
+    // To get blocked_by, we need to look at dependencies where this issue is blocked
+    // This information might not be in the response, so we return empty for now
+    // TODO: Check if bd show provides this information
+    return [];
   }
 
   /**

@@ -36,6 +36,14 @@ let boardData = null;
 let readOnly = false; // Read-only mode flag from extension
 let detailDirty = false;
 
+// Phase 2: Client-side card cache for fast filtering/sorting
+// Maps card ID to card data (MinimalCard, EnrichedCard, or FullCard)
+const cardCache = new Map();
+
+// Track which tier each card is loaded to: 'minimal' | 'enriched' | 'full'
+// This prevents redundant loads when we already have the data
+const cardStateLevel = new Map();
+
 // Table view pagination state (server-side)
 let tablePaginationState = {
     currentPage: 0,
@@ -451,6 +459,129 @@ function columnForCard(card) {
     return "blocked"; // Default fallback
 }
 
+// Phase 2: In-memory filtering over cardCache
+// Returns filtered array of cards based on current filter values
+// Performance target: <16ms for 10,000 cards
+function getFilteredCards() {
+    const pVal = filterPriority.value;
+    const tVal = filterType.value;
+    const sVal = filterSearch.value.toLowerCase().trim();
+    
+    // If no filters, return all cards from cache
+    if (!pVal && !tVal && !sVal) {
+        return Array.from(cardCache.values());
+    }
+    
+    // Filter cards in memory
+    const filtered = [];
+    for (const card of cardCache.values()) {
+        // Priority filter
+        if (pVal !== "" && card.priority !== parseInt(pVal)) {
+            continue;
+        }
+        
+        // Type filter
+        if (tVal !== "" && card.issue_type !== tVal) {
+            continue;
+        }
+        
+        // Search filter (title, description, or ID)
+        if (sVal !== "") {
+            const titleMatch = card.title.toLowerCase().includes(sVal);
+            const descMatch = card.description && card.description.toLowerCase().includes(sVal);
+            const idMatch = card.id.toLowerCase().includes(sVal);
+            
+            if (!titleMatch && !descMatch && !idMatch) {
+                continue;
+            }
+        }
+        
+        filtered.push(card);
+    }
+    
+    return filtered;
+}
+
+// Phase 2: In-memory sorting
+// Takes array of cards and sorts by specified field and direction
+// Performance target: <16ms for 10,000 cards
+// sortBy: 'updated_at' | 'created_at' | 'priority' | 'title' | 'status' (default: 'updated_at')
+// sortDir: 'asc' | 'desc' (default: 'desc')
+function getSortedCards(cards, sortBy = 'updated_at', sortDir = 'desc') {
+    if (!cards || cards.length === 0) {
+        return [];
+    }
+    
+    const sorted = [...cards]; // Copy to avoid mutating input
+    
+    sorted.sort((a, b) => {
+        let aVal, bVal;
+        
+        switch (sortBy) {
+            case 'priority':
+                aVal = a.priority ?? 2; // Default to medium priority
+                bVal = b.priority ?? 2;
+                break;
+            
+            case 'title':
+                aVal = (a.title || '').toLowerCase();
+                bVal = (b.title || '').toLowerCase();
+                return sortDir === 'asc' 
+                    ? aVal.localeCompare(bVal)
+                    : bVal.localeCompare(aVal);
+            
+            case 'status':
+                aVal = a.status || '';
+                bVal = b.status || '';
+                return sortDir === 'asc'
+                    ? aVal.localeCompare(bVal)
+                    : bVal.localeCompare(aVal);
+            
+            case 'created_at':
+                aVal = new Date(a.created_at || 0).getTime();
+                bVal = new Date(b.created_at || 0).getTime();
+                break;
+            
+            case 'updated_at':
+            default:
+                aVal = new Date(a.updated_at || 0).getTime();
+                bVal = new Date(b.updated_at || 0).getTime();
+                break;
+        }
+        
+        // Numeric comparison for dates and priority
+        return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+    
+    return sorted;
+}
+
+// Phase 2: In-memory grouping by column
+// Takes array of cards and groups them into columns
+// Performance target: <16ms for 10,000 cards
+// Returns: { ready: [], in_progress: [], blocked: [], closed: [] }
+function getCardsByColumn(cards) {
+    const byColumn = {
+        ready: [],
+        in_progress: [],
+        blocked: [],
+        closed: []
+    };
+    
+    if (!cards || cards.length === 0) {
+        return byColumn;
+    }
+    
+    for (const card of cards) {
+        const col = columnForCard(card);
+        if (byColumn[col]) {
+            byColumn[col].push(card);
+        }
+    }
+    
+    return byColumn;
+}
+
 // Dispatch to the appropriate render function based on view mode
 function render() {
     console.log('[Webview] render() called, viewMode:', viewMode, 'columnState:', columnState);
@@ -495,26 +626,36 @@ function render() {
 function renderKanban() {
     console.log('[Webview] renderKanban() - columns:', columns.length);
 
-    // Filtering
-    const pVal = filterPriority.value;
-    const tVal = filterType.value;
-    const sVal = filterSearch.value.toLowerCase();
-
-    // Filter within each column's loaded cards
-    const byCol = {};
-    for (const col of columns) {
-        const colKey = col.key;
-        const colCards = columnState[colKey]?.cards || [];
+    // Phase 2: Use in-memory filtering, sorting, and grouping over cardCache
+    // This provides instant UI updates without server round-trips
+    const filtered = getFilteredCards();
+    const sorted = getSortedCards(filtered, 'updated_at', 'desc'); // Sort by most recently updated
+    const byCol = getCardsByColumn(sorted);
+    
+    console.log('[Webview] renderKanban() - filtered:', filtered.length, 'cards from cardCache');
+    
+    // Legacy filtering for backward compatibility when cardCache is not populated
+    // This handles the case where board.load (old path) is used instead of board.loadMinimal
+    if (cardCache.size === 0) {
+        console.log('[Webview] cardCache empty, using legacy columnState filtering');
+        const pVal = filterPriority.value;
+        const tVal = filterType.value;
+        const sVal = filterSearch.value.toLowerCase();
         
-        byCol[colKey] = colCards.filter(c => {
-            if (pVal !== "" && c.priority !== parseInt(pVal)) return false;
-            if (tVal !== "" && c.issue_type !== tVal) return false;
-            if (sVal !== "" && !c.title.toLowerCase().includes(sVal)) return false;
-            return true;
-        });
+        for (const col of columns) {
+            const colKey = col.key;
+            const colCards = columnState[colKey]?.cards || [];
+            
+            byCol[colKey] = colCards.filter(c => {
+                if (pVal !== "" && c.priority !== parseInt(pVal)) return false;
+                if (tVal !== "" && c.issue_type !== tVal) return false;
+                if (sVal !== "" && !c.title.toLowerCase().includes(sVal)) return false;
+                return true;
+            });
+        }
     }
 
-    console.log('[Webview] render() - filtered cards:', Object.values(byCol).flat().length);
+    console.log('[Webview] renderKanban() - filtered cards:', Object.values(byCol).flat().length);
     console.log('[Webview] render() - clearing board and rebuilding DOM');
     boardEl.innerHTML = "";
     for (const col of columns) {
@@ -1337,6 +1478,69 @@ window.addEventListener("message", (event) => {
         return;
     }
 
+    // Phase 2: Handle board.minimal response (fast loading with MinimalCard[])
+    if (msg.type === "board.minimal") {
+        console.log('[Webview] Processing board.minimal message');
+        console.log('[Webview] Minimal cards count:', msg.payload?.cards?.length);
+        
+        const cards = msg.payload.cards || [];
+        
+        // Phase 2: Populate cardCache with all MinimalCard data
+        cardCache.clear();
+        cardStateLevel.clear();
+        for (const card of cards) {
+            cardCache.set(card.id, card);
+            cardStateLevel.set(card.id, 'minimal');
+        }
+        console.log(`[Webview] cardCache populated with ${cardCache.size} cards at 'minimal' level`);
+        
+        // Initialize columnState by distributing cards into columns
+        for (const col of ['ready', 'in_progress', 'blocked', 'closed']) {
+            columnState[col] = {
+                cards: [],
+                offset: 0,
+                totalCount: 0,
+                hasMore: false,
+                loading: false
+            };
+        }
+        
+        // Distribute cards into appropriate columns
+        for (const card of cards) {
+            const col = columnForCard(card);
+            if (columnState[col]) {
+                columnState[col].cards.push(card);
+            }
+        }
+        
+        // Update counts
+        for (const col of ['ready', 'in_progress', 'blocked', 'closed']) {
+            columnState[col].totalCount = columnState[col].cards.length;
+        }
+        
+        // Maintain backward compatibility with boardData
+        boardData = {
+            columns: columns,
+            cards: cards
+        };
+        
+        console.log('[Webview] columnState initialized from cardCache, calling render()');
+        render();
+        console.log('[Webview] render() completed, calling hideLoading()');
+        hideLoading();
+        
+        // Resolve any pending request waiting for board data
+        if (msg.requestId && pendingRequests.has(msg.requestId)) {
+            const { resolve, timeoutId } = pendingRequests.get(msg.requestId);
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            pendingRequests.delete(msg.requestId);
+            resolve(msg.payload);
+        }
+        return;
+    }
+
     if (msg.type === "board.columnData") {
         console.log('[Webview] Processing board.columnData message');
         const { column, cards, offset, totalCount, hasMore } = msg.payload;
@@ -1427,8 +1631,62 @@ window.addEventListener("message", (event) => {
 
 // Initial load
 
-function openDetail(card) {
+// Phase 2: Load full issue details on-demand
+// Checks cardStateLevel and only loads from server if needed
+// Returns: Promise<FullCard>
+async function loadFullIssue(issueId) {
+    if (!issueId) {
+        throw new Error('Issue ID is required');
+    }
+    
+    // Check if we already have full details in cache
+    const currentLevel = cardStateLevel.get(issueId);
+    if (currentLevel === 'full') {
+        console.log(`[Webview] loadFullIssue(${issueId}): already at full level, returning from cache`);
+        return cardCache.get(issueId);
+    }
+    
+    console.log(`[Webview] loadFullIssue(${issueId}): current level is ${currentLevel || 'none'}, loading full details from server`);
+    
+    try {
+        // Request full issue details from extension
+        const response = await postAsync('issue.getFull', { id: issueId }, 'Loading issue details...');
+        
+        if (response.type === 'issue.full' && response.payload?.card) {
+            const fullCard = response.payload.card;
+            
+            // Update cache with full card data
+            cardCache.set(issueId, fullCard);
+            cardStateLevel.set(issueId, 'full');
+            
+            console.log(`[Webview] loadFullIssue(${issueId}): loaded and cached full card`);
+            return fullCard;
+        } else {
+            throw new Error('Unexpected response type: ' + response.type);
+        }
+    } catch (error) {
+        console.error(`[Webview] loadFullIssue(${issueId}) failed:`, error);
+        toast('Failed to load issue details: ' + error.message);
+        throw error;
+    }
+}
+
+async function openDetail(card) {
     if (!card) return;
+
+    // Phase 2: Load full issue details if editing existing issue
+    const isCreateMode = card.id === null;
+    if (!isCreateMode) {
+        try {
+            // Load full details from server or cache
+            const fullCard = await loadFullIssue(card.id);
+            // Use full card data for the rest of the function
+            card = fullCard;
+        } catch (error) {
+            // Error already displayed by loadFullIssue()
+            return;
+        }
+    }
 
     // We will dynamically rebuild the form content to support editing
     const form = detDialog.querySelector("form");
@@ -1459,7 +1717,6 @@ function openDetail(card) {
     const typeOptions = ["task", "bug", "feature", "epic", "chore"];
     const priorityOptions = [0, 1, 2, 3, 4];
 
-    const isCreateMode = card.id === null;
     const issueOptionsId = "issueIdOptions";
     
     // Collect all cards from columnState for the datalist
@@ -2326,5 +2583,5 @@ ${card.design || 'None'}
     detDialog.showModal();
 }
 
-console.log('[Webview] Sending initial board.load request');
-post("board.load");
+console.log('[Webview] Sending initial board.loadMinimal request');
+post("board.loadMinimal");
