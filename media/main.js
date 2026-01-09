@@ -2242,7 +2242,12 @@ async function openDetail(card) {
         // Re-attach remove handlers
         labelsContainer.querySelectorAll(".remove-label").forEach(btn => {
             btn.onclick = async (e) => {
-                const label = e.target.dataset.label;
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[Webview] Label remove clicked, target:', e.target, 'currentTarget:', e.currentTarget);
+                // Use currentTarget instead of target to ensure we get the .remove-label element
+                const label = e.currentTarget.dataset.label;
+                console.log('[Webview] Removing label:', label);
                 if (isCreateMode) {
                     // In create mode, just remove from local array
                     card.labels = (card.labels || []).filter(l => l !== label);
