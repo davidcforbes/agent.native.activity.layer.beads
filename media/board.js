@@ -1169,8 +1169,12 @@ function renderTable() {
     // Get visible columns (respecting user preferences)
     let visibleColumns = tableColumns.filter(col => {
         if (Object.keys(tableState.columnVisibility).length > 0) {
-            return tableState.columnVisibility[col.id] !== false;
+            // If column is explicitly in saved state, use that preference
+            if (col.id in tableState.columnVisibility) {
+                return tableState.columnVisibility[col.id] !== false;
+            }
         }
+        // Fall back to default visibility
         return col.visible;
     });
 
