@@ -470,6 +470,7 @@ function getFilteredCards() {
     
     // Get selected status values from multi-select
     const selectedStatuses = Array.from(filterStatus.selectedOptions).map(opt => opt.value);
+    console.log('[Webview] getFilteredCards - selectedStatuses:', selectedStatuses);
     
     // If no filters, return all cards from cache
     if (!pVal && !tVal && !sVal && selectedStatuses.length === 0) {
@@ -512,6 +513,7 @@ function getFilteredCards() {
         filtered.push(card);
     }
     
+    console.log('[Webview] getFilteredCards - total in cache:', cardCache.size, 'filtered:', filtered.length);
     return filtered;
 }
 
@@ -1338,7 +1340,10 @@ const debouncedRender = debounce(render, 300);
 
 filterPriority.addEventListener("change", render); // Immediate for dropdown
 filterType.addEventListener("change", render); // Immediate for dropdown
-filterStatus.addEventListener("change", render); // Immediate for multi-select
+filterStatus.addEventListener("change", () => {
+    console.log('[Webview] Status filter changed, selected options:', Array.from(filterStatus.selectedOptions).map(opt => opt.value));
+    render();
+}); // Immediate for multi-select
 filterSearch.addEventListener("input", debouncedRender); // Debounced for text input
 
 // Clear all filters
