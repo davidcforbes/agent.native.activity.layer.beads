@@ -1199,6 +1199,10 @@ function renderTable() {
                         <option value="500" ${tablePaginationState.pageSize === 500 ? 'selected' : ''}>500</option>
                     </select>
                     <span class="pagination-info">Showing ${startIdx + 1}-${endIdx} of ${totalCount} rows</span>
+                    <div class="table-column-controls">
+                        <button class="btn" id="columnPickerBtn" title="Show/hide columns">⚙ Columns</button>
+                        <button class="btn" id="resetTableColumns" title="Reset table columns to defaults">Reset Columns</button>
+                    </div>
                 </div>
                 <div class="table-controls-right">
                     ${totalPages > 1 ? `
@@ -1206,6 +1210,26 @@ function renderTable() {
                         <span class="pagination-info">Page ${currentPage + 1} of ${totalPages}</span>
                         <button class="btn pagination-btn" id="tableNextPage" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
                     ` : ''}
+                </div>
+            </div>
+            <div class="column-picker-dropdown" id="columnPickerDropdown" style="display: none;">
+                <div class="column-picker-header">
+                    <span>Show/Hide Columns</span>
+                    <button class="close-btn" id="closeColumnPicker">✕</button>
+                </div>
+                <div class="column-picker-list">
+                    ${tableColumns.map(col => {
+                        const isVisible = visibleColumns.some(vc => vc.id === col.id);
+                        return `
+                            <label class="column-picker-item">
+                                <input type="checkbox"
+                                    class="column-toggle"
+                                    data-column-id="${col.id}"
+                                    ${isVisible ? 'checked' : ''}>
+                                <span>${col.label}</span>
+                            </label>
+                        `;
+                    }).join('')}
                 </div>
             </div>
             <div class="table-wrapper">
@@ -1275,6 +1299,60 @@ function renderTable() {
                 }
             });
         }
+    }
+
+    // Add reset columns button handler
+    const resetBtn = document.getElementById('resetTableColumns');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            // Reset column visibility and order to defaults
+            tableState.columnVisibility = {};
+            tableState.columnOrder = [];
+            saveState();
+            renderTable();
+        });
+    }
+
+    // Add column picker dropdown handlers
+    const columnPickerBtn = document.getElementById('columnPickerBtn');
+    const columnPickerDropdown = document.getElementById('columnPickerDropdown');
+    const closeColumnPickerBtn = document.getElementById('closeColumnPicker');
+
+    if (columnPickerBtn && columnPickerDropdown) {
+        // Toggle dropdown visibility
+        columnPickerBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isVisible = columnPickerDropdown.style.display === 'block';
+            columnPickerDropdown.style.display = isVisible ? 'none' : 'block';
+        });
+
+        // Close button handler
+        if (closeColumnPickerBtn) {
+            closeColumnPickerBtn.addEventListener('click', () => {
+                columnPickerDropdown.style.display = 'none';
+            });
+        }
+
+        // Handle checkbox changes
+        const checkboxes = columnPickerDropdown.querySelectorAll('.column-toggle');
+        checkboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const columnId = e.target.dataset.columnId;
+                const isChecked = e.target.checked;
+
+                // Update column visibility state
+                tableState.columnVisibility[columnId] = isChecked;
+                saveState();
+                renderTable();
+            });
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!columnPickerDropdown.contains(e.target) && e.target !== columnPickerBtn) {
+                columnPickerDropdown.style.display = 'none';
+            }
+        });
     }
 
     // Add click handlers to table rows

@@ -140,7 +140,7 @@ export class DaemonManager {
    */
   async listAllDaemons(): Promise<DaemonInfo[]> {
     try {
-      const { stdout } = await spawnAsync('bd', ['daemons', 'list', '--json'], this.workspaceRoot);
+      const { stdout } = await spawnAsync('bd', ['daemon', 'list', '--json'], this.workspaceRoot);
 
       if (!stdout.trim()) {
         return [];
@@ -157,7 +157,7 @@ export class DaemonManager {
 
       return [];
     } catch (error) {
-      this.logSpawnError(['daemons', 'list', '--json'], error);
+      this.logSpawnError(['daemon', 'list', '--json'], error);
       return [];
     }
   }
@@ -167,7 +167,7 @@ export class DaemonManager {
    */
   async checkHealth(): Promise<{ healthy: boolean; issues: string[] }> {
     try {
-      const { stdout } = await spawnAsync('bd', ['daemons', 'health', '--json'], this.workspaceRoot);
+      const { stdout } = await spawnAsync('bd', ['daemon', 'health', '--json'], this.workspaceRoot);
 
       if (!stdout.trim()) {
         return { healthy: true, issues: [] };
@@ -191,7 +191,7 @@ export class DaemonManager {
         issues
       };
     } catch (error) {
-      this.logSpawnError(['daemons', 'health', '--json'], error);
+      this.logSpawnError(['daemon', 'health', '--json'], error);
       return {
         healthy: false,
         issues: [error instanceof Error ? error.message : 'Health check failed']
@@ -207,18 +207,18 @@ export class DaemonManager {
    */
   async start(): Promise<void> {
     try {
-      await spawnAsync('bd', ['daemon', '--start'], this.workspaceRoot);
+      await spawnAsync('bd', ['daemon', 'start'], this.workspaceRoot);
     } catch (error) {
-      this.logSpawnError(['daemon', '--start'], error);
+      this.logSpawnError(['daemon', 'start'], error);
       throw error;
     }
   }
 
   async restart(): Promise<void> {
     try {
-      await spawnAsync('bd', ['daemons', 'restart', '.'], this.workspaceRoot);
+      await spawnAsync('bd', ['daemon', 'restart', this.workspaceRoot], this.workspaceRoot);
     } catch (error) {
-      this.logSpawnError(['daemons', 'restart', '.'], error);
+      this.logSpawnError(['daemon', 'restart', this.workspaceRoot], error);
       throw error;
     }
   }
@@ -228,9 +228,9 @@ export class DaemonManager {
    */
   async stop(): Promise<void> {
     try {
-      await spawnAsync('bd', ['daemons', 'stop', '.'], this.workspaceRoot);
+      await spawnAsync('bd', ['daemon', 'stop', this.workspaceRoot], this.workspaceRoot);
     } catch (error) {
-      this.logSpawnError(['daemons', 'stop', '.'], error);
+      this.logSpawnError(['daemon', 'stop', this.workspaceRoot], error);
       throw error;
     }
   }
@@ -242,10 +242,10 @@ export class DaemonManager {
     try {
       // Validate lines parameter
       const safeLines = Math.max(1, Math.min(1000, Math.floor(lines)));
-      const { stdout } = await spawnAsync('bd', ['daemons', 'logs', '.', '-n', String(safeLines)], this.workspaceRoot);
+      const { stdout } = await spawnAsync('bd', ['daemon', 'logs', this.workspaceRoot, '-n', String(safeLines)], this.workspaceRoot);
       return stdout;
     } catch (error) {
-      this.logSpawnError(['daemons', 'logs', '.', '-n', String(lines)], error);
+      this.logSpawnError(['daemon', 'logs', this.workspaceRoot, '-n', String(lines)], error);
       return error instanceof Error ? error.message : 'Failed to get logs';
     }
   }

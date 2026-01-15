@@ -1078,6 +1078,86 @@ main {
     cursor: not-allowed;
 }
 
+/* Column controls and picker dropdown */
+.table-column-controls {
+    position: relative;
+    display: flex;
+    gap: 8px;
+}
+
+.column-picker-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 8px;
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    min-width: 200px;
+    max-width: 300px;
+}
+
+.column-picker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.column-picker-header .close-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 16px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+}
+
+.column-picker-header .close-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--vscode-editor-foreground);
+}
+
+.column-picker-list {
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.column-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.15s ease;
+    user-select: none;
+}
+
+.column-picker-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.column-picker-item input[type="checkbox"] {
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+
+.column-picker-item span {
+    font-size: 13px;
+}
+
 /* Column dialog (for column selection) */
 .column-dialog {
     border: 1px solid var(--border);

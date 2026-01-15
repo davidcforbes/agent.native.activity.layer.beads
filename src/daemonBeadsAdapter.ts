@@ -1476,7 +1476,9 @@ export class DaemonBeadsAdapter {
     status?: string;
   }): Promise<void> {
     this.validateIssueId(id);
-    const args = ['update', id, '--no-daemon']; // Use --no-daemon to bypass daemon bug with --due flag
+    // WORKAROUND: Use --no-daemon to bypass daemon bug with --due flag
+    // TODO: Test if this is still needed with bd 0.47.1+ and remove if fixed
+    const args = ['update', id, '--no-daemon'];
 
     if (updates.title !== undefined) args.push('--title', updates.title);
     if (updates.description !== undefined) args.push('--description', updates.description);
