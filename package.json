@@ -1,10 +1,10 @@
 {
-  "name": "agent-native-kanban",
-  "displayName": "Agent Native Abstraction Layer for Beads",
-  "description": "Kanban board for Agent Native issues stored in .beads SQLite",
+  "name": "beads-kanban",
+  "displayName": "Beads Kanban",
+  "description": "Visual Kanban board for Beads issue tracking - view and manage your .beads issues in VS Code",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sebcook-ctrl/agent.native.activity.layer.beads.git"
+    "url": "https://github.com/davidcforbes/beads-kanban.git"
   },
   "version": "1.0.0",
   "publisher": "AgentNativeAbstractionLayer",

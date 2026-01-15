@@ -1,81 +1,168 @@
-# Beads - AI-Native Issue Tracking
+# Beads Kanban
 
-Welcome to Beads! This repository uses **Beads** for issue tracking - a modern, AI-native tool designed to live directly in your codebase alongside your code.
+A visual Kanban board VS Code extension for managing [Beads](https://github.com/steveyegge/beads) issues directly in your editor. View, create, edit, and organize your `.beads` issues with an intuitive drag-and-drop interface.
 
-## What is Beads?
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-Beads is issue tracking that lives in your repo, making it perfect for AI coding agents and developers who want their issues close to their code. No web UI required - everything works through the CLI and integrates seamlessly with git.
+## Features
 
-**Learn more:** [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
+✨ **Visual Kanban Board**
+- Drag-and-drop cards between columns (Ready, In Progress, Blocked, Closed)
+- Real-time updates with your `.beads` database
+- Incremental loading for large issue databases (10,000+ issues)
+
+📊 **Table View**
+- Sortable columns with multi-column sorting (Shift+Click)
+- Customizable column visibility
+- Pagination with configurable page sizes
+- Filter by priority, type, status, and search
+
+🔧 **Full Issue Management**
+- Create, edit, and update issues
+- Add comments, labels, and dependencies
+- Markdown support with live preview
+- Rich metadata fields (priority, assignee, estimated time, etc.)
+
+⚡ **Dual Adapter Support**
+- **sql.js adapter**: In-memory SQLite for fast local operations
+- **Daemon adapter**: Uses `bd` CLI for advanced features
+
+## Installation
+
+### From VSIX (Recommended)
+1. Download the latest `.vsix` file from [Releases](https://github.com/davidcforbes/beads-kanban/releases)
+2. In VS Code: `Extensions > ... > Install from VSIX...`
+3. Select the downloaded file
+4. Reload VS Code
+
+### From Marketplace (Coming Soon)
+Search for "Beads Kanban" in the VS Code Extensions marketplace.
 
 ## Quick Start
 
-### Essential Commands
+1. **Initialize Beads in your project** (if not already done):
+   ```bash
+   bd init
+   ```
 
+2. **Open the Kanban board**:
+   - Command Palette (`Ctrl+Shift+P`): "Beads: Open Kanban Board"
+   - Or use the status bar button
+
+3. **Start managing issues**:
+   - Create issues with the "New" button
+   - Drag cards between columns to update status
+   - Click cards to view/edit details
+   - Switch to Table view for sorting and filtering
+
+## What is Beads?
+
+Beads is an AI-native issue tracking system that lives directly in your codebase. Issues are stored in `.beads/*.db` SQLite files and sync with git, making them perfect for AI coding agents and developers who want issues close to code.
+
+**Learn more:** [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
+
+## Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `beadsKanban.readOnly` | `false` | Enable read-only mode (no edits) |
+| `beadsKanban.useDaemonAdapter` | `false` | Use `bd` daemon instead of in-memory adapter |
+| `beadsKanban.initialLoadLimit` | `100` | Issues per column on initial load |
+| `beadsKanban.pageSize` | `50` | Issues to load when clicking "Load More" |
+| `beadsKanban.preloadClosedColumn` | `false` | Load closed issues on initial load |
+| `beadsKanban.lazyLoadDependencies` | `true` | Load dependencies on-demand |
+
+## Development
+
+### Prerequisites
+- Node.js 20+
+- VS Code 1.90+
+
+### Build from Source
 ```bash
-# Create new issues
-bd create "Add user authentication"
+# Clone the repository
+git clone https://github.com/davidcforbes/beads-kanban.git
+cd beads-kanban
 
-# View all issues
-bd list
+# Install dependencies
+npm install
 
-# View issue details
-bd show <issue-id>
+# Compile
+npm run compile
 
-# Update issue status
-bd update <issue-id> --status in_progress
-bd update <issue-id> --status done
+# Run tests
+npm test
 
-# Sync with git remote
-bd sync
+# Package VSIX
+npx @vscode/vsce package
 ```
 
-### Working with Issues
+### Development Workflow
+1. Press `F5` to launch Extension Development Host
+2. Make changes to source files
+3. Press `Ctrl+Shift+F5` to reload extension
+4. Use `npm run watch` for automatic compilation
 
-Issues in Beads are:
-- **Git-native**: Stored in `.beads/issues.jsonl` and synced like code
-- **AI-friendly**: CLI-first design works perfectly with AI coding agents
-- **Branch-aware**: Issues can follow your branch workflow
-- **Always in sync**: Auto-syncs with your commits
-
-## Why Beads?
-
-✨ **AI-Native Design**
-- Built specifically for AI-assisted development workflows
-- CLI-first interface works seamlessly with AI coding agents
-- No context switching to web UIs
-
-🚀 **Developer Focused**
-- Issues live in your repo, right next to your code
-- Works offline, syncs when you push
-- Fast, lightweight, and stays out of your way
-
-🔧 **Git Integration**
-- Automatic sync with git commits
-- Branch-aware issue tracking
-- Intelligent JSONL merge resolution
-
-## Get Started with Beads
-
-Try Beads in your own projects:
+## Testing
 
 ```bash
-# Install Beads
-curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+# Run all tests
+npm test
 
-# Initialize in your repo
-bd init
+# Watch mode
+npm run test:watch
 
-# Create your first issue
-bd create "Try out Beads"
+# Coverage report
+npm run test:coverage
+
+# Integration tests
+npm run test:adapter
 ```
 
-## Learn More
+## Architecture
 
-- **Documentation**: [github.com/steveyegge/beads/docs](https://github.com/steveyegge/beads/tree/main/docs)
-- **Quick Start Guide**: Run `bd quickstart`
-- **Examples**: [github.com/steveyegge/beads/examples](https://github.com/steveyegge/beads/tree/main/examples)
+The extension uses a clean architecture with three main layers:
+
+- **Extension Host** (`src/extension.ts`): Command registration, webview lifecycle, message routing
+- **Data Adapters**:
+  - `src/beadsAdapter.ts`: sql.js in-memory adapter
+  - `src/daemonBeadsAdapter.ts`: CLI-based daemon adapter
+- **Webview UI** (`media/board.js`, `media/styles.css`): Reactive UI with incremental loading
+
+See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation.
+
+## Contributing
+
+Contributions are welcome! This is an actively maintained fork where the original author became non-responsive.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development Guidelines
+- Follow existing code style (use ESLint)
+- Add tests for new features
+- Update documentation as needed
+- Keep commits focused and well-described
+
+## Attribution
+
+This project is a fork of the original work by [sebcook-ctrl](https://github.com/sebcook-ctrl/agent.native.activity.layer.beads). When the original author became non-responsive, this repository was established to continue active development and accept community contributions.
+
+**Original Project**: [agent.native.activity.layer.beads](https://github.com/sebcook-ctrl/agent.native.activity.layer.beads)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2024 Agent Native Kanban Contributors
+Original work Copyright (c) 2024 sebcook-ctrl
 
 ---
 
-*Beads: Issue tracking that moves at the speed of thought* ⚡
+**Made with ❤️ for the Beads community**
+
+Questions? Open an [issue](https://github.com/davidcforbes/beads-kanban/issues) or start a [discussion](https://github.com/davidcforbes/beads-kanban/discussions)!
