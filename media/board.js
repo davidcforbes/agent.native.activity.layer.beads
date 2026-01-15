@@ -131,6 +131,9 @@ let tablePaginationState = {
     loading: false
 };
 
+// Flag to track if column picker document listener has been added
+let columnPickerDocListenerAdded = false;
+
 // Debounce utility for performance optimization
 function debounce(func, wait) {
     let timeout;
@@ -1202,6 +1205,26 @@ function renderTable() {
                     <div class="table-column-controls">
                         <button class="btn" id="columnPickerBtn" title="Show/hide columns">⚙ Columns</button>
                         <button class="btn" id="resetTableColumns" title="Reset table columns to defaults">Reset Columns</button>
+                        <div class="column-picker-dropdown" id="columnPickerDropdown" style="display: none;">
+                            <div class="column-picker-header">
+                                <span>Show/Hide Columns</span>
+                                <button class="close-btn" id="closeColumnPicker">✕</button>
+                            </div>
+                            <div class="column-picker-list">
+                                ${tableColumns.map(col => {
+                                    const isVisible = visibleColumns.some(vc => vc.id === col.id);
+                                    return `
+                                        <label class="column-picker-item">
+                                            <input type="checkbox"
+                                                class="column-toggle"
+                                                data-column-id="${col.id}"
+                                                ${isVisible ? 'checked' : ''}>
+                                            <span>${col.label}</span>
+                                        </label>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="table-controls-right">
@@ -1210,26 +1233,6 @@ function renderTable() {
                         <span class="pagination-info">Page ${currentPage + 1} of ${totalPages}</span>
                         <button class="btn pagination-btn" id="tableNextPage" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
                     ` : ''}
-                </div>
-            </div>
-            <div class="column-picker-dropdown" id="columnPickerDropdown" style="display: none;">
-                <div class="column-picker-header">
-                    <span>Show/Hide Columns</span>
-                    <button class="close-btn" id="closeColumnPicker">✕</button>
-                </div>
-                <div class="column-picker-list">
-                    ${tableColumns.map(col => {
-                        const isVisible = visibleColumns.some(vc => vc.id === col.id);
-                        return `
-                            <label class="column-picker-item">
-                                <input type="checkbox"
-                                    class="column-toggle"
-                                    data-column-id="${col.id}"
-                                    ${isVisible ? 'checked' : ''}>
-                                <span>${col.label}</span>
-                            </label>
-                        `;
-                    }).join('')}
                 </div>
             </div>
             <div class="table-wrapper">
@@ -1347,12 +1350,17 @@ function renderTable() {
             });
         });
 
-        // Close dropdown when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!columnPickerDropdown.contains(e.target) && e.target !== columnPickerBtn) {
-                columnPickerDropdown.style.display = 'none';
-            }
-        });
+        // Close dropdown when clicking outside (add listener only once)
+        if (!columnPickerDocListenerAdded) {
+            document.addEventListener('click', (e) => {
+                const dropdown = document.getElementById('columnPickerDropdown');
+                const btn = document.getElementById('columnPickerBtn');
+                if (dropdown && !dropdown.contains(e.target) && e.target !== btn) {
+                    dropdown.style.display = 'none';
+                }
+            });
+            columnPickerDocListenerAdded = true;
+        }
     }
 
     // Add click handlers to table rows
